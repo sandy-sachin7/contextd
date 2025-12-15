@@ -11,7 +11,7 @@ readme = "README.md"
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
-notify = "6.0"
+notify = "8.2.0"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -21,3 +21,9 @@ tokenizers = "0.19"
 pdf-extract = "0.7"
 chrono = { version = "0.4", features = ["serde"] }
 ndarray = "0.15" # Often needed with ort
+toml = "0.9.8"
+notify-debouncer-mini = "0.7.0"
+ignore = "0.4.25"
+
+[dev-dependencies]
+tempfile = "3.23.0"
