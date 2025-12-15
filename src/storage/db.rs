@@ -79,13 +79,16 @@ impl Database {
         Ok(id)
     }
 
+    #[allow(dead_code)]
     pub fn get_file_id(&self, path: &str) -> Result<Option<i64>> {
         let conn = self.conn.lock().unwrap();
-        let id = conn.query_row(
-            "SELECT id FROM files WHERE path = ?1",
-            params![path],
-            |row| row.get(0),
-        ).optional()?;
+        let id = conn
+            .query_row(
+                "SELECT id FROM files WHERE path = ?1",
+                params![path],
+                |row| row.get(0),
+            )
+            .optional()?;
         Ok(id)
     }
 
@@ -100,21 +103,102 @@ impl Database {
 
     pub fn clear_chunks(&self, file_id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM chunks WHERE file_id = ?1", params![file_id])?;
+        Ok(())
+    }
+
+    pub fn add_chunk(
+        &self,
+        file_id: i64,
+        start: u64,
+        end: u64,
+        content: &str,
+        embedding: Option<&[f32]>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+
+        let embedding_bytes = if let Some(emb) = embedding {
+            // Convert &[f32] to bytes (little endian)
+            let mut bytes = Vec::with_capacity(emb.len() * 4);
+            for val in emb {
+                bytes.extend_from_slice(&val.to_le_bytes());
+            }
+            Some(bytes)
+        } else {
+            None
+        };
+
         conn.execute(
-            "DELETE FROM chunks WHERE file_id = ?1",
-            params![file_id],
+            "INSERT INTO chunks (file_id, start_offset, end_offset, content, embedding, metadata)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+            params![file_id, start, end, content, embedding_bytes],
         )?;
         Ok(())
     }
 
-    pub fn add_chunk(&self, file_id: i64, start: u64, end: u64, content: &str) -> Result<()> {
+    pub fn search_chunks(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> Result<Vec<(String, f32)>> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO chunks (file_id, start_offset, end_offset, content, embedding, metadata)
-             VALUES (?1, ?2, ?3, ?4, NULL, NULL)",
-            params![file_id, start, end, content],
-        )?;
-        Ok(())
+
+        // Build query with optional time filters
+        let mut sql = "SELECT c.content, c.embedding FROM chunks c JOIN files f ON c.file_id = f.id WHERE c.embedding IS NOT NULL".to_string();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(start) = start_time {
+            sql.push_str(" AND f.last_modified >= ?");
+            params.push(Box::new(start));
+        }
+
+        if let Some(end) = end_time {
+            sql.push_str(" AND f.last_modified <= ?");
+            params.push(Box::new(end));
+        }
+
+        let mut stmt = conn.prepare(&sql)?;
+
+        // Map params to reference slice
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+        let chunk_iter = stmt.query_map(params_refs.as_slice(), |row| {
+            let content: String = row.get(0)?;
+            let embedding_blob: Vec<u8> = row.get(1)?;
+            Ok((content, embedding_blob))
+        })?;
+
+        let mut scored_chunks = Vec::new();
+
+        for chunk in chunk_iter {
+            let (content, embedding_blob) = chunk?;
+
+            // Convert bytes back to Vec<f32>
+            let embedding: Vec<f32> = embedding_blob
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+                .collect();
+
+            if embedding.len() != query_embedding.len() {
+                continue; // Skip dimension mismatch
+            }
+
+            // Cosine similarity (assuming normalized vectors)
+            let score: f32 = embedding
+                .iter()
+                .zip(query_embedding)
+                .map(|(a, b)| a * b)
+                .sum();
+            scored_chunks.push((content, score));
+        }
+
+        // Sort by score descending
+        scored_chunks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored_chunks.truncate(limit);
+
+        Ok(scored_chunks)
     }
 }
 
@@ -128,8 +212,12 @@ mod tests {
         let conn = db.conn.lock().unwrap();
 
         // Check tables exist
-        let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table'").unwrap();
-        let tables: Vec<String> = stmt.query_map([], |row| row.get(0)).unwrap()
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .unwrap();
+        let tables: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
             .map(|r| r.unwrap())
             .collect();
 
@@ -163,11 +251,13 @@ mod tests {
         assert_eq!(id1, id2); // ID should remain same
 
         let conn = db.conn.lock().unwrap();
-        let last_mod: u64 = conn.query_row(
-            "SELECT last_modified FROM files WHERE id = ?1",
-            params![id1],
-            |row| row.get(0)
-        ).unwrap();
+        let last_mod: u64 = conn
+            .query_row(
+                "SELECT last_modified FROM files WHERE id = ?1",
+                params![id1],
+                |row| row.get(0),
+            )
+            .unwrap();
 
         assert_eq!(last_mod, 200);
     }
@@ -178,15 +268,17 @@ mod tests {
         let path = "/tmp/test.txt";
         let file_id = db.add_or_update_file(path, 100).unwrap();
 
-        db.add_chunk(file_id, 0, 10, "chunk1").unwrap();
-        db.add_chunk(file_id, 10, 20, "chunk2").unwrap();
+        db.add_chunk(file_id, 0, 10, "chunk1", None).unwrap();
+        db.add_chunk(file_id, 10, 20, "chunk2", None).unwrap();
 
         let conn = db.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM chunks WHERE file_id = ?1",
-            params![file_id],
-            |row| row.get(0)
-        ).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks WHERE file_id = ?1",
+                params![file_id],
+                |row| row.get(0),
+            )
+            .unwrap();
 
         assert_eq!(count, 2);
 
@@ -195,11 +287,13 @@ mod tests {
         db.clear_chunks(file_id).unwrap();
 
         let conn = db.conn.lock().unwrap();
-        let count_after: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM chunks WHERE file_id = ?1",
-            params![file_id],
-            |row| row.get(0)
-        ).unwrap();
+        let count_after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks WHERE file_id = ?1",
+                params![file_id],
+                |row| row.get(0),
+            )
+            .unwrap();
 
         assert_eq!(count_after, 0);
     }

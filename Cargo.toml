@@ -2,6 +2,11 @@
 name = "contextd"
 version = "0.1.0"
 edition = "2021"
+authors = ["Santhosh Sachin"]
+description = "A local-first, semantic context daemon for AI agents."
+license = "MIT"
+repository = "https://github.com/sandy-sachin7/contextd"
+readme = "README.md"
 
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
@@ -11,3 +16,8 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 axum = "0.7"
+ort = { version = "2.0.0-rc.4", features = ["ndarray"] }
+tokenizers = "0.19"
+pdf-extract = "0.7"
+chrono = { version = "0.4", features = ["serde"] }
+ndarray = "0.15" # Often needed with ort

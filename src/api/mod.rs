@@ -1,21 +1,25 @@
+use crate::indexer::embeddings::Embedder;
+use crate::storage::db::Database;
 use axum::{
-    extract::{State, Json},
+    extract::{Json, State},
     routing::post,
     Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-use crate::storage::db::Database;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: Arc<Mutex<Database>>,
+    db: Arc<Mutex<Database>>,
+    embedder: Arc<Embedder>,
 }
 
 #[derive(Deserialize)]
 pub struct QueryRequest {
     pub query: String,
     pub limit: Option<usize>,
+    pub start_time: Option<u64>, // Unix timestamp
+    pub end_time: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -26,20 +30,22 @@ pub struct QueryResponse {
 #[derive(Serialize)]
 pub struct QueryResult {
     pub content: String,
-    pub source: String,
     pub score: f32,
 }
 
-pub async fn run_server(db: Database) {
+pub async fn run_server(db: Database, embedder: Arc<Embedder>) {
     let state = AppState {
         db: Arc::new(Mutex::new(db)),
+        embedder,
     };
 
     let app = Router::new()
         .route("/query", post(handle_query))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3030").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3030")
+        .await
+        .unwrap();
     println!("API listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
@@ -48,21 +54,30 @@ async fn handle_query(
     State(state): State<AppState>,
     Json(payload): Json<QueryRequest>,
 ) -> Json<QueryResponse> {
-    // Phase 1: Mock response or basic keyword search
-    // Since we don't have embeddings yet, we'll just return a placeholder
-    // or maybe query the chunks table with LIKE if we want to be fancy.
-    // Let's do a simple LIKE query for now.
+    println!("Received query: {}", payload.query);
 
-    let _db = state.db.lock().unwrap();
-    // TODO: Implement actual search in DB
+    // Embed query
+    let embedding = match state.embedder.embed(&payload.query) {
+        Ok(emb) => emb,
+        Err(e) => {
+            eprintln!("Embedding error: {}", e);
+            return Json(QueryResponse { results: vec![] });
+        }
+    };
 
-    Json(QueryResponse {
-        results: vec![
-            QueryResult {
-                content: format!("Result for: {}", payload.query),
-                source: "mock".to_string(),
-                score: 1.0,
-            }
-        ]
-    })
+    // Search DB
+    let limit = payload.limit.unwrap_or(5);
+    let db = state.db.lock().unwrap();
+    let results = match db.search_chunks(&embedding, limit, payload.start_time, payload.end_time) {
+        Ok(res) => res
+            .into_iter()
+            .map(|(content, score)| QueryResult { content, score })
+            .collect(),
+        Err(e) => {
+            eprintln!("Search error: {}", e);
+            vec![]
+        }
+    };
+
+    Json(QueryResponse { results })
 }

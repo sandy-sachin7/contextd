@@ -11,7 +11,7 @@ pub fn chunk_text(content: &str) -> Result<Vec<Chunk>> {
     let mut start = 0;
 
     // Simple paragraph splitter for Phase 1
-    for (_i, paragraph) in content.split("\n\n").enumerate() {
+    for paragraph in content.split("\n\n") {
         let len = paragraph.len() as u64;
         if len == 0 {
             start += 2; // Skip double newline
@@ -28,6 +28,14 @@ pub fn chunk_text(content: &str) -> Result<Vec<Chunk>> {
     }
 
     Ok(chunks)
+}
+
+pub fn chunk_pdf(path: &std::path::Path) -> Result<Vec<Chunk>> {
+    let bytes = std::fs::read(path)?;
+    let content = pdf_extract::extract_text_from_mem(&bytes)?;
+
+    // Reuse text chunking logic for now
+    chunk_text(&content)
 }
 
 #[cfg(test)]
