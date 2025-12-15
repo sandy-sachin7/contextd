@@ -56,3 +56,49 @@ impl Default for Config {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_default_config() {
+        let config = Config::default();
+        assert_eq!(config.server.port, 3030);
+        assert_eq!(config.storage.db_path, PathBuf::from("contextd.db"));
+    }
+
+    #[test]
+    fn test_load_config() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        writeln!(
+            file,
+            r#"
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[storage]
+db_path = "test.db"
+model_path = "models"
+
+[watch]
+paths = ["/tmp"]
+
+[plugins]
+test = ["echo"]
+"#
+        )?;
+
+        let config = Config::load(file.path())?;
+        assert_eq!(config.server.port, 8080);
+        assert_eq!(config.server.host, "0.0.0.0");
+        assert_eq!(config.storage.db_path, PathBuf::from("test.db"));
+        assert_eq!(config.watch.paths[0], PathBuf::from("/tmp"));
+        assert!(config.plugins.contains_key("test"));
+
+        Ok(())
+    }
+}

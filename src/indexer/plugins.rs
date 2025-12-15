@@ -34,3 +34,25 @@ pub fn run_parser(cmd: &[String], file_path: &Path) -> Result<String> {
 
     Ok(stdout)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_run_parser_echo() {
+        let cmd = vec!["echo".to_string(), "-n".to_string(), "hello".to_string()];
+        // We ignore the file path for echo, but we need to pass something
+        let output = run_parser(&cmd, Path::new("dummy.txt")).expect("Failed to run echo");
+        // echo with file path arg usually prints the args.
+        // "echo -n hello dummy.txt" -> "hello dummy.txt"
+        assert!(output.contains("hello"));
+    }
+
+    #[test]
+    fn test_run_parser_fail() {
+        let cmd = vec!["false".to_string()];
+        let result = run_parser(&cmd, Path::new("dummy.txt"));
+        assert!(result.is_err());
+    }
+}

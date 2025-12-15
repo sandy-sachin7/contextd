@@ -9,6 +9,29 @@ A local-first, semantic context daemon for AI agents. `contextd` indexes your lo
 - **File Watching**: Automatically re-indexes files when they change.
 - **Time-Based Filtering**: Filter context by modification time.
 - **Formats**: Supports `.txt`, `.md`, and `.pdf`.
+- **Extensible**: Configurable via `contextd.toml` and supports external parser plugins.
+
+## Configuration
+
+Create a `contextd.toml` file in the working directory to configure the daemon:
+
+```toml
+[server]
+host = "127.0.0.1"
+port = 3030
+
+[storage]
+db_path = "contextd.db"
+model_path = "models"
+
+[watch]
+paths = ["."]
+
+[plugins]
+# Map file extensions to external commands
+# The command receives the file path as the last argument
+docx = ["pandoc", "-t", "plain"]
+```
 
 ## Getting Started
 
