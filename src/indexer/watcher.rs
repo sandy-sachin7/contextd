@@ -12,9 +12,7 @@ pub fn watch(
     let mut debouncer = new_debouncer(Duration::from_millis(2000), tx)?;
 
     for path in paths {
-        debouncer
-            .watcher()
-            .watch(path, RecursiveMode::Recursive)?;
+        debouncer.watcher().watch(path, RecursiveMode::Recursive)?;
     }
 
     Ok(debouncer)
