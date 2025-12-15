@@ -29,8 +29,7 @@ pub fn run_parser(cmd: &[String], file_path: &Path) -> Result<String> {
         ));
     }
 
-    let stdout = String::from_utf8(output.stdout)
-        .context("Plugin output is not valid UTF-8")?;
+    let stdout = String::from_utf8(output.stdout).context("Plugin output is not valid UTF-8")?;
 
     Ok(stdout)
 }

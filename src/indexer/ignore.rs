@@ -12,14 +12,15 @@ impl IgnoreChecker {
 
         // Add .contextignore
         if let Some(err) = builder.add(root.join(".contextignore")) {
-            if !err.is_io() { // Ignore IO errors (missing file)
+            if !err.is_io() {
+                // Ignore IO errors (missing file)
                 eprintln!("Error loading .contextignore: {}", err);
             }
         }
 
         // Add .gitignore
         if let Some(err) = builder.add(root.join(".gitignore")) {
-             if !err.is_io() {
+            if !err.is_io() {
                 eprintln!("Error loading .gitignore: {}", err);
             }
         }

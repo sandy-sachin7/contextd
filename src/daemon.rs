@@ -30,7 +30,10 @@ pub async fn run(config: Config) -> Result<()> {
     });
 
     // Initialize Ignore Checkers
-    let ignore_checkers: Vec<crate::indexer::ignore::IgnoreChecker> = config.watch.paths.iter()
+    let ignore_checkers: Vec<crate::indexer::ignore::IgnoreChecker> = config
+        .watch
+        .paths
+        .iter()
         .map(|p| crate::indexer::ignore::IgnoreChecker::new(p))
         .collect();
 
@@ -54,7 +57,8 @@ pub async fn run(config: Config) -> Result<()> {
 
                         let chunks_result = if let Some(cmd) = config.plugins.get(ext) {
                             println!("Using plugin {:?} for {:?}", cmd, path);
-                            plugins::run_parser(cmd, &path).and_then(|content| chunker::chunk_text(&content))
+                            plugins::run_parser(cmd, &path)
+                                .and_then(|content| chunker::chunk_text(&content))
                         } else if ext == "pdf" {
                             chunker::chunk_pdf(&path)
                         } else if ["txt", "md"].contains(&ext) {
@@ -89,7 +93,8 @@ pub async fn run(config: Config) -> Result<()> {
                                 "created": created,
                                 "modified": modified,
                                 "extension": ext
-                            }).to_string();
+                            })
+                            .to_string();
 
                             if let Ok(file_id) = db.add_or_update_file(&path_str, modified) {
                                 let count = chunks.len();
