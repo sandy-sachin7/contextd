@@ -5,28 +5,29 @@ use anyhow::Result;
 use std::path::Path;
 use std::sync::{mpsc, Arc};
 
-pub async fn run() -> Result<()> {
+use crate::config::Config;
+
+pub async fn run(config: Config) -> Result<()> {
     // 1. Initialize Storage
-    let db_path = "contextd.db";
-    let db = Database::new(db_path)?;
-    println!("Database initialized at {}", db_path);
+    let db = Database::new(&config.storage.db_path)?;
+    println!("Database initialized at {:?}", config.storage.db_path);
 
     // 2. Initialize Embedder
-    let model_dir = "models";
-    let embedder = Arc::new(Embedder::new(model_dir)?);
-    println!("Embedder initialized from {}", model_dir);
+    let embedder = Arc::new(Embedder::new(&config.storage.model_path)?);
+    println!("Embedder initialized from {:?}", config.storage.model_path);
 
     // 3. Start Watcher
     let (tx, rx) = mpsc::channel();
-    let watch_path = Path::new("."); // Watch current dir for now
-    let _watcher = watcher::watch(watch_path, tx)?;
-    println!("Watching {}", watch_path.display());
+    let _watcher = watcher::watch(&config.watch.paths, tx)?;
+    println!("Watching {:?}", config.watch.paths);
 
     // 4. Start API Server in background
     let db_clone = db.clone();
     let embedder_clone = embedder.clone();
+    let host = config.server.host.clone();
+    let port = config.server.port;
     tokio::spawn(async move {
-        api::run_server(db_clone, embedder_clone).await;
+        api::run_server(db_clone, embedder_clone, &host, port).await;
     });
 
     // 5. Main Loop: Process File Events
