@@ -1,15 +1,21 @@
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
-use std::path::Path;
-use std::sync::mpsc::Sender;
-
+use notify_debouncer_mini::notify::{self, RecursiveMode, Watcher};
+use notify_debouncer_mini::{new_debouncer, DebounceEventResult, Debouncer};
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
+use std::time::Duration;
 
-pub fn watch(paths: &[PathBuf], tx: Sender<notify::Result<Event>>) -> notify::Result<RecommendedWatcher> {
-    // Watcher configuration
-    let mut watcher = notify::recommended_watcher(tx)?;
+pub fn watch(
+    paths: &[PathBuf],
+    tx: Sender<DebounceEventResult>,
+) -> notify::Result<Debouncer<notify::RecommendedWatcher>> {
+    // Watcher configuration with 2000ms debounce
+    let mut debouncer = new_debouncer(Duration::from_millis(2000), tx)?;
+
     for path in paths {
-        watcher.watch(path, RecursiveMode::Recursive)?;
+        debouncer
+            .watcher()
+            .watch(path, RecursiveMode::Recursive)?;
     }
 
-    Ok(watcher)
+    Ok(debouncer)
 }

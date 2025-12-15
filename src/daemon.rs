@@ -31,10 +31,15 @@ pub async fn run(config: Config) -> Result<()> {
 
     // 5. Main Loop: Process File Events
     println!("Daemon main loop starting...");
-    for event in rx {
-        match event {
-            Ok(event) => {
-                for path in event.paths {
+    for result in rx {
+        match result {
+            Ok(events) => {
+                let mut unique_paths = std::collections::HashSet::new();
+                for event in events {
+                    unique_paths.insert(event.path);
+                }
+
+                for path in unique_paths {
                     if path.exists() {
                         // Check extension
                         let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
