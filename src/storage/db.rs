@@ -12,8 +12,9 @@ impl Database {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let conn = Connection::open(path)?;
 
-        // Enable foreign keys
+        // Enable foreign keys and WAL mode
         conn.execute("PRAGMA foreign_keys = ON;", [])?;
+        let _mode: String = conn.query_row("PRAGMA journal_mode = WAL;", [], |row| row.get(0))?;
 
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -114,6 +115,7 @@ impl Database {
         end: u64,
         content: &str,
         embedding: Option<&[f32]>,
+        metadata: Option<&str>,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
 
@@ -130,8 +132,8 @@ impl Database {
 
         conn.execute(
             "INSERT INTO chunks (file_id, start_offset, end_offset, content, embedding, metadata)
-             VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
-            params![file_id, start, end, content, embedding_bytes],
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![file_id, start, end, content, embedding_bytes, metadata],
         )?;
         Ok(())
     }
@@ -268,8 +270,8 @@ mod tests {
         let path = "/tmp/test.txt";
         let file_id = db.add_or_update_file(path, 100).unwrap();
 
-        db.add_chunk(file_id, 0, 10, "chunk1", None).unwrap();
-        db.add_chunk(file_id, 10, 20, "chunk2", None).unwrap();
+        db.add_chunk(file_id, 0, 10, "chunk1", None, None).unwrap();
+        db.add_chunk(file_id, 10, 20, "chunk2", None, None).unwrap();
 
         let conn = db.conn.lock().unwrap();
         let count: i64 = conn

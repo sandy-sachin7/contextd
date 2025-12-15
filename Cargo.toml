@@ -22,6 +22,7 @@ pdf-extract = "0.7"
 chrono = { version = "0.4", features = ["serde"] }
 ndarray = "0.15" # Often needed with ort
 toml = "0.9.8"
+notify-debouncer-mini = "0.7.0"
 
 [dev-dependencies]
 tempfile = "3.23.0"

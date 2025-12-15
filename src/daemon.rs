@@ -2,7 +2,6 @@ use crate::api;
 use crate::indexer::{chunker, embeddings::Embedder, plugins, watcher};
 use crate::storage::db::Database;
 use anyhow::Result;
-use std::path::Path;
 use std::sync::{mpsc, Arc};
 
 use crate::config::Config;
@@ -62,6 +61,23 @@ pub async fn run(config: Config) -> Result<()> {
                                 .map(|d| d.as_secs())
                                 .unwrap_or(0);
 
+                            // Collect metadata
+                            let file_meta = std::fs::metadata(&path).ok();
+                            let size = file_meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                            let created = file_meta
+                                .as_ref()
+                                .and_then(|m| m.created().ok())
+                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+
+                            let metadata_json = serde_json::json!({
+                                "size": size,
+                                "created": created,
+                                "modified": modified,
+                                "extension": ext
+                            }).to_string();
+
                             if let Ok(file_id) = db.add_or_update_file(&path_str, modified) {
                                 let count = chunks.len();
                                 let _ = db.clear_chunks(file_id);
@@ -74,6 +90,7 @@ pub async fn run(config: Config) -> Result<()> {
                                         chunk.end,
                                         &chunk.content,
                                         embedding.as_deref(),
+                                        Some(&metadata_json),
                                     );
                                 }
                                 let _ = db.mark_indexed(file_id);
