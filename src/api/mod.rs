@@ -33,7 +33,7 @@ pub struct QueryResult {
     pub score: f32,
 }
 
-pub async fn run_server(db: Database, embedder: Arc<Embedder>) {
+pub async fn run_server(db: Database, embedder: Arc<Embedder>, host: &str, port: u16) {
     let state = AppState {
         db: Arc::new(Mutex::new(db)),
         embedder,
@@ -43,9 +43,8 @@ pub async fn run_server(db: Database, embedder: Arc<Embedder>) {
         .route("/query", post(handle_query))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3030")
-        .await
-        .unwrap();
+    let addr = format!("{}:{}", host, port);
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     println!("API listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
