@@ -1,0 +1,29 @@
+Note: Unnecessary use of -X or --request, POST is already inferred.
+* Host localhost:3030 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0   0     0   0     0     0     0  --:--:-- --:--:-- --:--:--     0*   Trying [::1]:3030...
+* connect to ::1 port 3030 from ::1 port 51810 failed: Connection refused
+*   Trying 127.0.0.1:3030...
+* Established connection to localhost (127.0.0.1 port 3030) from 127.0.0.1 port 34188 
+* using HTTP/1.x
+> POST /query HTTP/1.1
+> Host: localhost:3030
+> User-Agent: curl/8.17.0
+> Accept: */*
+> Content-Type: application/json
+> Content-Length: 29
+> 
+} [29 bytes data]
+* upload completely sent off: 29 bytes
+< HTTP/1.1 200 OK
+< content-type: application/json
+< content-length: 72
+< date: Mon, 15 Dec 2025 14:20:06 GMT
+< 
+{ [72 bytes data]
+100   101 100    72 100    29 58489 23558  --:--:-- --:--:-- --:--:-- 101000
+* Connection #0 to host localhost:3030 left intact
+{"results":[{"content":"Result for: test","source":"mock","score":1.0}]}
