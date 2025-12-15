@@ -29,6 +29,11 @@ pub async fn run(config: Config) -> Result<()> {
         api::run_server(db_clone, embedder_clone, &host, port).await;
     });
 
+    // Initialize Ignore Checkers
+    let ignore_checkers: Vec<crate::indexer::ignore::IgnoreChecker> = config.watch.paths.iter()
+        .map(|p| crate::indexer::ignore::IgnoreChecker::new(p))
+        .collect();
+
     // 5. Main Loop: Process File Events
     println!("Daemon main loop starting...");
     for result in rx {
@@ -40,7 +45,10 @@ pub async fn run(config: Config) -> Result<()> {
                 }
 
                 for path in unique_paths {
-                    if path.exists() {
+                    let is_dir = path.is_dir();
+                    let is_ignored = ignore_checkers.iter().any(|c| c.is_ignored(&path, is_dir));
+
+                    if !is_ignored && path.exists() {
                         // Check extension
                         let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
 
