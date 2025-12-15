@@ -1,5 +1,5 @@
 use crate::api;
-use crate::indexer::{chunker, embeddings::Embedder, watcher};
+use crate::indexer::{chunker, embeddings::Embedder, plugins, watcher};
 use crate::storage::db::Database;
 use anyhow::Result;
 use std::path::Path;
@@ -39,18 +39,17 @@ pub async fn run(config: Config) -> Result<()> {
                     if path.exists() {
                         // Check extension
                         let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-                        if !["txt", "md", "pdf"].contains(&ext) {
-                            continue;
-                        }
 
-                        println!("Processing {:?}", path);
-
-                        // Chunk
-                        let chunks_result = if ext == "pdf" {
+                        let chunks_result = if let Some(cmd) = config.plugins.get(ext) {
+                            println!("Using plugin {:?} for {:?}", cmd, path);
+                            plugins::run_parser(cmd, &path).and_then(|content| chunker::chunk_text(&content))
+                        } else if ext == "pdf" {
                             chunker::chunk_pdf(&path)
-                        } else {
+                        } else if ["txt", "md"].contains(&ext) {
                             let content = std::fs::read_to_string(&path).unwrap_or_default();
                             chunker::chunk_text(&content)
+                        } else {
+                            continue;
                         };
 
                         if let Ok(chunks) = chunks_result {
