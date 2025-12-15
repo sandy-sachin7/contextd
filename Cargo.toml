@@ -21,3 +21,4 @@ tokenizers = "0.19"
 pdf-extract = "0.7"
 chrono = { version = "0.4", features = ["serde"] }
 ndarray = "0.15" # Often needed with ort
+toml = "0.9.8"

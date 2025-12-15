@@ -9,3 +9,4 @@ async fn main() -> anyhow::Result<()> {
     println!("contextd starting...");
     daemon::run().await
 }
+```
