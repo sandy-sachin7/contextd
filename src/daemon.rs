@@ -52,6 +52,9 @@ pub async fn run(config: Config) -> Result<()> {
                     let is_ignored = ignore_checkers.iter().any(|c| c.is_ignored(&path, is_dir));
 
                     if !is_ignored && path.exists() {
+                        if path.is_dir() {
+                            continue;
+                        }
                         // Check extension
                         let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
 
@@ -112,6 +115,8 @@ pub async fn run(config: Config) -> Result<()> {
                                 let _ = db.mark_indexed(file_id);
                                 println!("Indexed {} chunks for {:?}", count, path);
                             }
+                        } else if let Err(e) = chunks_result {
+                            eprintln!("Error chunking file {:?}: {:?}", path, e);
                         }
                     }
                 }

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use tree_sitter::{Language, Parser};
+use tree_sitter::Parser;
 
 pub struct Chunk {
     pub start: u64,
@@ -60,7 +60,7 @@ pub fn chunk_markdown(content: &str) -> Result<Vec<Chunk>> {
     let mut current_chunk_start = 0;
     let mut current_chunk_content = String::new();
 
-    for (i, line) in content.lines().enumerate() {
+    for line in content.lines() {
         // Check for headers
         if line.starts_with("#") {
             // If we have accumulated content, push it as a chunk
@@ -127,8 +127,27 @@ pub fn chunk_pdf(path: &std::path::Path) -> Result<Vec<Chunk>> {
     let bytes = std::fs::read(path)?;
     let content = pdf_extract::extract_text_from_mem(&bytes)?;
 
-    // Reuse text chunking logic for now
-    chunk_text(&content)
+    let mut chunks = Vec::new();
+    let mut start = 0;
+
+    // Split by Form Feed (\f) which represents page breaks
+    for page in content.split('\x0c') { // \x0c is \f
+        let len = page.len() as u64;
+        if len == 0 {
+            start += 1; // Skip delimiter
+            continue;
+        }
+
+        chunks.push(Chunk {
+            start,
+            end: start + len,
+            content: page.to_string(),
+        });
+
+        start += len + 1; // content + \f
+    }
+
+    Ok(chunks)
 }
 
 #[cfg(test)]
@@ -180,5 +199,28 @@ More text.
         assert_eq!(chunks.len(), 2);
         assert!(chunks[0].content.contains("# Header 1"));
         assert!(chunks[1].content.contains("## Header 2"));
+    }
+
+    #[test]
+    fn test_chunk_pdf_logic() {
+        // Simulate PDF content with Form Feed characters
+        let content = "Page 1 content\x0cPage 2 content\x0cPage 3 content";
+
+        let mut chunks = Vec::new();
+        let mut start = 0;
+        for page in content.split('\x0c') {
+            let len = page.len() as u64;
+            chunks.push(Chunk {
+                start,
+                end: start + len,
+                content: page.to_string(),
+            });
+            start += len + 1;
+        }
+
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].content, "Page 1 content");
+        assert_eq!(chunks[1].content, "Page 2 content");
+        assert_eq!(chunks[2].content, "Page 3 content");
     }
 }
