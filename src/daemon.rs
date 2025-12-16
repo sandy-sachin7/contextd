@@ -16,6 +16,8 @@ pub async fn run(config: Config) -> Result<()> {
     let embedder = Arc::new(Embedder::new(&config.storage.model_path)?);
     println!("Embedder initialized from {:?}", config.storage.model_path);
 
+    let config = Arc::new(config);
+
     // 3. Initial Scan
     println!("Performing initial scan of {:?}", config.watch.paths);
     for path in &config.watch.paths {
@@ -29,7 +31,13 @@ pub async fn run(config: Config) -> Result<()> {
                 Ok(entry) => {
                     let path = entry.path();
                     if path.is_file() {
-                        index_file(path, &config, &db, &embedder);
+                        let config = config.clone();
+                        let db = db.clone();
+                        let embedder = embedder.clone();
+                        let path = path.to_path_buf();
+                        tokio::spawn(async move {
+                            index_file(path, config, db, embedder).await;
+                        });
                     }
                 }
                 Err(err) => eprintln!("Error during scan: {}", err),
@@ -82,7 +90,14 @@ pub async fn run(config: Config) -> Result<()> {
                         if path.file_name().and_then(|s| s.to_str()) == Some(".gitignore") {
                             continue;
                         }
-                        index_file(&path, &config, &db, &embedder);
+
+                        let config = config.clone();
+                        let db = db.clone();
+                        let embedder = embedder.clone();
+                        let path = path.to_path_buf();
+                        tokio::spawn(async move {
+                            index_file(path, config, db, embedder).await;
+                        });
                     }
                 }
             }
@@ -93,24 +108,32 @@ pub async fn run(config: Config) -> Result<()> {
     Ok(())
 }
 
-fn index_file(path: &std::path::Path, config: &Config, db: &Database, embedder: &Arc<Embedder>) {
+async fn index_file(
+    path: std::path::PathBuf,
+    config: Arc<Config>,
+    db: Database,
+    embedder: Arc<Embedder>,
+) {
     // Check extension
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
 
     let chunks_result = if let Some(cmd) = config.plugins.get(ext) {
         println!("Using plugin {:?} for {:?}", cmd, path);
-        plugins::run_parser(cmd, path).and_then(|content| chunker::chunk_by_type(&content, ext))
+        match plugins::run_parser(cmd, &path).await {
+            Ok(content) => chunker::chunk_by_type(&content, ext),
+            Err(e) => Err(e),
+        }
     } else if ext == "pdf" {
-        chunker::chunk_pdf(path)
+        chunker::chunk_pdf(&path)
     } else {
-        let content = std::fs::read_to_string(path).unwrap_or_default();
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
         chunker::chunk_by_type(&content, ext)
     };
 
     if let Ok(chunks) = chunks_result {
         // Store
         let path_str = path.to_string_lossy().to_string();
-        let metadata = std::fs::metadata(path).ok();
+        let metadata = std::fs::metadata(&path).ok();
         let modified = metadata
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -118,7 +141,7 @@ fn index_file(path: &std::path::Path, config: &Config, db: &Database, embedder: 
             .unwrap_or(0);
 
         // Collect metadata
-        let file_meta = std::fs::metadata(path).ok();
+        let file_meta = std::fs::metadata(&path).ok();
         let size = file_meta.as_ref().map(|m| m.len()).unwrap_or(0);
         let created = file_meta
             .as_ref()
