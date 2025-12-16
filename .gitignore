@@ -30,8 +30,9 @@ models/
 # Logs
 *.log
 # Project Documentation (Local only)
-ANTIGRAVITY.md
+Personal_plan.md
 
 # OS
 .DS_Store
 Thumbs.db
+data/

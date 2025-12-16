@@ -12,7 +12,12 @@ Unlike cloud-based solutions, `contextd` keeps all your data on your machine, en
 -   **🔒 Local-First & Private**: Your data never leaves your machine. Embeddings are generated locally using ONNX Runtime.
 -   **🧠 Semantic Search**: Powered by `all-MiniLM-L6-v2`, enabling your AI to find relevant context by meaning, not just keywords.
 -   **⚡ Real-Time Indexing**: Watches your file system for changes and updates the index instantly (with adaptive debouncing).
--   **📂 Multi-Format Support**: Native support for `.txt`, `.md`, and `.pdf`.
+-   **🔍 Initial Scan**: Automatically indexes existing files in watched directories on startup.
+-   **🧩 Semantic Chunking**: Smart splitting for:
+    -   **Rust**: Function/Struct-level chunking via Tree-sitter.
+    -   **Markdown**: Header-based section splitting.
+    -   **PDF**: Page-level splitting.
+-   **📂 Multi-Format Support**: Native support for `.txt`, `.md`, `.pdf`, and `.rs`.
 -   **🔌 Extensible Plugin System**: Add support for any file type (DOCX, EPUB, etc.) via external command-line parsers.
 -   **🛡️ Systems Brutality**: Built for robustness with adaptive debouncing, `.contextignore` support, and efficient resource usage.
 -   **⚙️ Highly Configurable**: Customize everything via `contextd.toml`.
