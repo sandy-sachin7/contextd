@@ -1,5 +1,5 @@
 use anyhow::Result;
-use tree_sitter::{Parser, Language};
+use tree_sitter::{Language, Parser};
 
 pub struct Chunk {
     pub start: u64,
@@ -20,7 +20,9 @@ pub fn chunk_rust(content: &str) -> Result<Vec<Chunk>> {
     let language = tree_sitter_rust::language();
     parser.set_language(language)?;
 
-    let tree = parser.parse(content, None).ok_or_else(|| anyhow::anyhow!("Failed to parse Rust code"))?;
+    let tree = parser
+        .parse(content, None)
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse Rust code"))?;
     let root_node = tree.root_node();
     let mut chunks = Vec::new();
     let mut cursor = root_node.walk();
@@ -29,7 +31,10 @@ pub fn chunk_rust(content: &str) -> Result<Vec<Chunk>> {
     for child in root_node.children(&mut cursor) {
         let kind = child.kind();
         // We want to chunk by major definitions
-        if matches!(kind, "function_item" | "impl_item" | "struct_item" | "enum_item" | "mod_item" | "trait_item") {
+        if matches!(
+            kind,
+            "function_item" | "impl_item" | "struct_item" | "enum_item" | "mod_item" | "trait_item"
+        ) {
             let start_byte = child.start_byte() as u64;
             let end_byte = child.end_byte() as u64;
             let chunk_content = &content[child.start_byte()..child.end_byte()];
