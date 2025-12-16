@@ -58,14 +58,12 @@ pub async fn run(config: Config) -> Result<()> {
                         let chunks_result = if let Some(cmd) = config.plugins.get(ext) {
                             println!("Using plugin {:?} for {:?}", cmd, path);
                             plugins::run_parser(cmd, &path)
-                                .and_then(|content| chunker::chunk_text(&content))
+                                .and_then(|content| chunker::chunk_by_type(&content, ext))
                         } else if ext == "pdf" {
                             chunker::chunk_pdf(&path)
-                        } else if ["txt", "md"].contains(&ext) {
-                            let content = std::fs::read_to_string(&path).unwrap_or_default();
-                            chunker::chunk_text(&content)
                         } else {
-                            continue;
+                            let content = std::fs::read_to_string(&path).unwrap_or_default();
+                            chunker::chunk_by_type(&content, ext)
                         };
 
                         if let Ok(chunks) = chunks_result {
