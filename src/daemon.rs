@@ -99,8 +99,7 @@ fn index_file(path: &std::path::Path, config: &Config, db: &Database, embedder: 
 
     let chunks_result = if let Some(cmd) = config.plugins.get(ext) {
         println!("Using plugin {:?} for {:?}", cmd, path);
-        plugins::run_parser(cmd, path)
-            .and_then(|content| chunker::chunk_by_type(&content, ext))
+        plugins::run_parser(cmd, path).and_then(|content| chunker::chunk_by_type(&content, ext))
     } else if ext == "pdf" {
         chunker::chunk_pdf(path)
     } else {

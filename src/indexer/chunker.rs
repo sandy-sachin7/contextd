@@ -131,7 +131,8 @@ pub fn chunk_pdf(path: &std::path::Path) -> Result<Vec<Chunk>> {
     let mut start = 0;
 
     // Split by Form Feed (\f) which represents page breaks
-    for page in content.split('\x0c') { // \x0c is \f
+    for page in content.split('\x0c') {
+        // \x0c is \f
         let len = page.len() as u64;
         if len == 0 {
             start += 1; // Skip delimiter

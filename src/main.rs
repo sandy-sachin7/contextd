@@ -22,7 +22,10 @@ async fn main() -> anyhow::Result<()> {
         println!("Loading config from {}", config_path.display());
         Config::load(config_path)?
     } else {
-        println!("Config not found at {}, using defaults", config_path.display());
+        println!(
+            "Config not found at {}, using defaults",
+            config_path.display()
+        );
         Config::default()
     };
 
