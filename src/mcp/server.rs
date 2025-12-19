@@ -1,175 +1,302 @@
-//! MCP Server implementation for contextd
-//!
-//! Exposes semantic search tools to AI assistants via the Model Context Protocol.
-
-use crate::config::Config;
+use std::sync::Arc;
+use crate::storage::db::Database;
 use crate::indexer::embeddings::Embedder;
-use crate::storage::db::{Database, SearchOptions};
-use rmcp::{
-    handler::server::tool::ToolRouter,
-    model::{CallToolResult, Content, Implementation, ServerInfo},
-    tool, tool_router, ErrorData as McpError, ServerHandler,
-};
-use schemars::JsonSchema;
+use crate::config::Config;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use serde_json::Value;
 
-/// MCP Server for contextd semantic search
-#[derive(Clone)]
+// JSON-RPC Types
+#[derive(Debug, Deserialize)]
+struct JsonRpcRequest {
+    jsonrpc: String,
+    method: String,
+    params: Option<Value>,
+    id: Option<Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonRpcResponse {
+    jsonrpc: String,
+    id: Option<Value>,
+    result: Option<Value>,
+    error: Option<JsonRpcError>,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonRpcError {
+    code: i32,
+    message: String,
+}
+
+#[derive(Serialize)]
+struct ServerInfo {
+    name: String,
+    version: String,
+}
+
+#[derive(Serialize)]
+struct InitializeResult {
+    protocolVersion: String,
+    capabilities: serde_json::Map<String, Value>,
+    serverInfo: ServerInfo,
+    instructions: String,
+}
+
+#[derive(Serialize)]
+struct Tool {
+    name: String,
+    description: String,
+    inputSchema: Value,
+}
+
+#[derive(Serialize)]
+struct ListToolsResult {
+    tools: Vec<Tool>,
+}
+
+#[derive(Serialize)]
+struct Content {
+    #[serde(rename = "type")]
+    kind: String,
+    text: String,
+}
+
+#[derive(Serialize)]
+struct CallToolResult {
+    content: Vec<Content>,
+    isError: bool,
+}
+
 pub struct ContextdServer {
-    db: Arc<Mutex<Database>>,
+    db: Database,
     embedder: Arc<Embedder>,
     #[allow(dead_code)]
-    config: Arc<Config>,
-    #[allow(dead_code)] // Used internally by rmcp macros
-    tool_router: ToolRouter<Self>,
+    config: Config,
 }
 
 impl ContextdServer {
     pub fn new(db: Database, embedder: Arc<Embedder>, config: Config) -> Self {
-        Self {
-            db: Arc::new(Mutex::new(db)),
-            embedder,
-            config: Arc::new(config),
-            tool_router: Self::tool_router(),
-        }
+        Self { db, embedder, config }
     }
-}
 
-// ============================================================================
-// Tool Parameters
-// ============================================================================
+    async fn handle_request(&self, req: JsonRpcRequest) -> Option<JsonRpcResponse> {
+        let id = req.id.clone();
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub struct SearchContextParams {
-    /// The search query - can be natural language describing what you're looking for
-    pub query: String,
-    /// Maximum number of results to return (default: 5)
-    #[serde(default)]
-    pub limit: Option<usize>,
-    /// Filter by file extensions (e.g., ["rs", "py", "ts"])
-    #[serde(default)]
-    pub file_types: Option<Vec<String>>,
-    /// Minimum relevance score (0.0-1.0, default: 0.0)
-    #[serde(default)]
-    pub min_score: Option<f32>,
-}
+        // Handle notifications (no id)
+        if id.is_none() {
+            if req.method == "notifications/initialized" || req.method == "initialized" {
+                eprintln!("MCP initialized notification received");
+            }
+            return None;
+        }
 
-// ============================================================================
-// Tool Implementations
-// ============================================================================
+        let result = match req.method.as_str() {
+            "initialize" => {
+                eprintln!("MCP initialize request received");
+                Ok(serde_json::to_value(InitializeResult {
+                    protocolVersion: "2024-11-05".to_string(),
+                    capabilities: serde_json::Map::new(),
+                    serverInfo: ServerInfo {
+                        name: "contextd".to_string(),
+                        version: "0.1.0".to_string(),
+                    },
+                    instructions: "contextd provides semantic search over your codebase. Use search_context to find relevant code and documentation.".to_string(),
+                }).unwrap())
+            },
+            "tools/list" => {
+                eprintln!("MCP tools/list request received");
+                Ok(serde_json::to_value(ListToolsResult {
+                    tools: vec![
+                        Tool {
+                            name: "search_context".to_string(),
+                            description: "Search for relevant code and documentation using semantic search.".to_string(),
+                            inputSchema: serde_json::json!({
+                                "type": "object",
+                                "properties": {
+                                    "query": { "type": "string", "description": "The search query" },
+                                    "limit": { "type": "integer", "description": "Max results (default 5)" },
+                                    "file_types": { "type": "array", "items": { "type": "string" }, "description": "Filter by file extension" },
+                                    "min_score": { "type": "number", "description": "Minimum similarity score (0.0-1.0)" }
+                                },
+                                "required": ["query"]
+                            }),
+                        },
+                        Tool {
+                            name: "get_status".to_string(),
+                            description: "Get indexing status and statistics.".to_string(),
+                            inputSchema: serde_json::json!({
+                                "type": "object",
+                                "properties": {},
+                            }),
+                        },
+                    ],
+                }).unwrap())
+            },
+            "tools/call" => {
+                eprintln!("MCP tools/call request received");
+                if let Some(params) = req.params {
+                    let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let args = params.get("arguments").unwrap_or(&serde_json::json!({})).clone();
 
-#[tool_router]
-impl ContextdServer {
-    /// Search for relevant code or documentation using semantic similarity.
-    #[tool(
-        name = "search_context",
-        description = "Search for relevant code or documentation by meaning. Returns semantically similar content chunks from the indexed codebase."
-    )]
-    async fn search_context(
-        &self,
-        params: rmcp::handler::server::wrapper::Parameters<SearchContextParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let params = params.0;
+                    match name {
+                        "search_context" => {
+                            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+                            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+                            let min_score = args.get("min_score").and_then(|v| v.as_f64()).map(|v| v as f32);
 
-        let embedding = self
-            .embedder
-            .embed(&params.query)
-            .map_err(|e| McpError::internal_error(format!("Embedding error: {}", e), None))?;
+                            // Parse file_types
+                            let file_types = args.get("file_types").and_then(|v| v.as_array()).map(|arr| {
+                                arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<_>>()
+                            });
 
-        let options = SearchOptions {
-            limit: Some(params.limit.unwrap_or(5)),
-            file_types: params.file_types,
-            min_score: params.min_score,
-            ..Default::default()
+                            eprintln!("Executing search: '{}' (limit: {})", query, limit);
+
+                            // Embed query
+                            let embedding_result = self.embedder.embed(query);
+
+                            match embedding_result {
+                                Ok(embedding) => {
+                                    // Use existing search logic
+                                    let options = crate::storage::db::SearchOptions {
+                                        limit: Some(limit),
+                                        min_score,
+                                        file_types,
+                                        paths: None,
+                                        ..Default::default()
+                                    };
+
+                                    let results = self.db.search_chunks_enhanced(&embedding, &options);
+
+                                    match results {
+                                        Ok(hits) => {
+                                            let mut text = String::new();
+                                            for hit in hits {
+                                                text.push_str(&format!("File: {}\nScore: {:.2}\n\n{}\n\n---\n\n",
+                                                    hit.file_path, hit.score, hit.content));
+                                            }
+                                            if text.is_empty() {
+                                                text = "No results found.".to_string();
+                                            }
+                                            Ok(serde_json::to_value(CallToolResult {
+                                                content: vec![Content {
+                                                    kind: "text".to_string(),
+                                                    text,
+                                                }],
+                                                isError: false,
+                                            }).unwrap())
+                                        },
+                                        Err(e) => Err(JsonRpcError {
+                                            code: -32603,
+                                            message: format!("Search failed: {}", e),
+                                        }),
+                                    }
+                                },
+                                Err(e) => Err(JsonRpcError {
+                                    code: -32603,
+                                    message: format!("Embedding failed: {}", e),
+                                }),
+                            }
+                        },
+                        "get_status" => {
+                            match self.db.get_stats() {
+                                Ok(stats) => {
+                                    let text = format!(
+                                        "Indexed Files: {}\nTotal Chunks: {}\nDatabase Size: {:.2} MB",
+                                        stats.file_count,
+                                        stats.chunk_count,
+                                        stats.db_size as f64 / 1024.0 / 1024.0
+                                    );
+                                    Ok(serde_json::to_value(CallToolResult {
+                                        content: vec![Content {
+                                            kind: "text".to_string(),
+                                            text,
+                                        }],
+                                        isError: false,
+                                    }).unwrap())
+                                },
+                                Err(e) => Err(JsonRpcError {
+                                    code: -32603,
+                                    message: format!("Failed to get stats: {}", e),
+                                }),
+                            }
+                        },
+                        _ => Err(JsonRpcError {
+                            code: -32601,
+                            message: format!("Unknown tool: {}", name),
+                        }),
+                    }
+                } else {
+                    Err(JsonRpcError {
+                        code: -32602,
+                        message: "Missing params".to_string(),
+                    })
+                }
+            },
+            _ => Err(JsonRpcError {
+                code: -32601,
+                message: format!("Method not found: {}", req.method),
+            }),
         };
 
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| McpError::internal_error(format!("Database lock error: {}", e), None))?;
-
-        let results = db
-            .search_chunks_enhanced(&embedding, &options)
-            .map_err(|e| McpError::internal_error(format!("Search error: {}", e), None))?;
-
-        // Format results as text content
-        let mut content_parts = Vec::new();
-        for (i, result) in results.iter().enumerate() {
-            content_parts.push(Content::text(format!(
-                "--- Result {} (score: {:.2}) ---\nFile: {}\n\n{}\n",
-                i + 1,
-                result.score,
-                result.file_path,
-                result.content
-            )));
-        }
-
-        if content_parts.is_empty() {
-            content_parts.push(Content::text("No relevant content found."));
-        }
-
-        Ok(CallToolResult::success(content_parts))
-    }
-
-    /// Get the current indexing status of contextd.
-    #[tool(
-        name = "get_status",
-        description = "Get the current indexing status including file count, chunk count, and database size."
-    )]
-    async fn get_status(&self) -> Result<CallToolResult, McpError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| McpError::internal_error(format!("Database lock error: {}", e), None))?;
-
-        let stats = db
-            .get_stats()
-            .map_err(|e| McpError::internal_error(format!("Stats error: {}", e), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(format!(
-            "Indexed files: {}\nTotal chunks: {}\nDatabase size: {} bytes",
-            stats.file_count, stats.chunk_count, stats.db_size
-        ))]))
-    }
-}
-
-// ============================================================================
-// ServerHandler Implementation
-// ============================================================================
-
-impl ServerHandler for ContextdServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: Default::default(),
-            capabilities: Default::default(),
-            server_info: Implementation {
-                name: "contextd".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
-                title: None,
-                icons: None,
-                website_url: None,
-            },
-            instructions: Some("contextd provides semantic search over your codebase. Use search_context to find relevant code and documentation.".into()),
+        match result {
+            Ok(val) => Some(JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id,
+                result: Some(val),
+                error: None,
+            }),
+            Err(err) => Some(JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id,
+                result: None,
+                error: Some(err),
+            }),
         }
     }
 }
 
-// ============================================================================
-// Server Runner
-// ============================================================================
-
-/// Run the MCP server over stdio (for Claude Desktop integration)
+/// Run the MCP server over stdio (manual implementation)
 pub async fn run_mcp_server(db: Database, embedder: Arc<Embedder>, config: Config) {
-    use rmcp::transport::io::stdio;
-
     let server = ContextdServer::new(db, embedder, config);
+    eprintln!("contextd MCP server starting on stdio (manual)...");
 
-    eprintln!("contextd MCP server starting on stdio...");
+    let stdin = tokio::io::stdin();
+    let mut reader = BufReader::new(stdin).lines();
+    let mut stdout = tokio::io::stdout();
 
-    let transport = stdio();
+    while let Ok(Some(line)) = reader.next_line().await {
+        if line.trim().is_empty() {
+            continue;
+        }
 
-    if let Err(e) = rmcp::serve_server(server, transport).await {
-        eprintln!("MCP server error: {}", e);
+        // Parse request
+        match serde_json::from_str::<JsonRpcRequest>(&line) {
+            Ok(req) => {
+                if let Some(resp) = server.handle_request(req).await {
+                    let json = serde_json::to_string(&resp).unwrap();
+                    eprintln!("Sending response: {}", json);
+                    println!("{}", json);
+                }
+            },
+            Err(e) => {
+                eprintln!("Failed to parse JSON-RPC: {} (line: {})", e, line);
+                // Send parse error
+                let error_resp = JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: None,
+                    result: None,
+                    error: Some(JsonRpcError {
+                        code: -32700,
+                        message: "Parse error".to_string(),
+                    }),
+                };
+                let json = serde_json::to_string(&error_resp).unwrap();
+                let _ = stdout.write_all(format!("{}\n", json).as_bytes()).await;
+                let _ = stdout.flush().await;
+            }
+        }
     }
+
+    eprintln!("MCP server stdin closed, exiting.");
 }
