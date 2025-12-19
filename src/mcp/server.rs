@@ -1,14 +1,15 @@
-use std::sync::Arc;
-use crate::storage::db::Database;
-use crate::indexer::embeddings::Embedder;
 use crate::config::Config;
+use crate::indexer::embeddings::Embedder;
+use crate::storage::db::Database;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use serde_json::Value;
+use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 // JSON-RPC Types
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
+    #[allow(dead_code)]
     jsonrpc: String,
     method: String,
     params: Option<Value>,
@@ -37,9 +38,11 @@ struct ServerInfo {
 
 #[derive(Serialize)]
 struct InitializeResult {
-    protocolVersion: String,
+    #[serde(rename = "protocolVersion")]
+    protocol_version: String,
     capabilities: serde_json::Map<String, Value>,
-    serverInfo: ServerInfo,
+    #[serde(rename = "serverInfo")]
+    server_info: ServerInfo,
     instructions: String,
 }
 
@@ -47,7 +50,8 @@ struct InitializeResult {
 struct Tool {
     name: String,
     description: String,
-    inputSchema: Value,
+    #[serde(rename = "inputSchema")]
+    input_schema: Value,
 }
 
 #[derive(Serialize)]
@@ -65,7 +69,8 @@ struct Content {
 #[derive(Serialize)]
 struct CallToolResult {
     content: Vec<Content>,
-    isError: bool,
+    #[serde(rename = "isError")]
+    is_error: bool,
 }
 
 pub struct ContextdServer {
@@ -77,7 +82,11 @@ pub struct ContextdServer {
 
 impl ContextdServer {
     pub fn new(db: Database, embedder: Arc<Embedder>, config: Config) -> Self {
-        Self { db, embedder, config }
+        Self {
+            db,
+            embedder,
+            config,
+        }
     }
 
     async fn handle_request(&self, req: JsonRpcRequest) -> Option<JsonRpcResponse> {
@@ -95,15 +104,15 @@ impl ContextdServer {
             "initialize" => {
                 eprintln!("MCP initialize request received");
                 Ok(serde_json::to_value(InitializeResult {
-                    protocolVersion: "2024-11-05".to_string(),
+                    protocol_version: "2024-11-05".to_string(),
                     capabilities: serde_json::Map::new(),
-                    serverInfo: ServerInfo {
+                    server_info: ServerInfo {
                         name: "contextd".to_string(),
                         version: "0.1.0".to_string(),
                     },
                     instructions: "contextd provides semantic search over your codebase. Use search_context to find relevant code and documentation.".to_string(),
                 }).unwrap())
-            },
+            }
             "tools/list" => {
                 eprintln!("MCP tools/list request received");
                 Ok(serde_json::to_value(ListToolsResult {
@@ -111,7 +120,7 @@ impl ContextdServer {
                         Tool {
                             name: "search_context".to_string(),
                             description: "Search for relevant code and documentation using semantic search.".to_string(),
-                            inputSchema: serde_json::json!({
+                            input_schema: serde_json::json!({
                                 "type": "object",
                                 "properties": {
                                     "query": { "type": "string", "description": "The search query" },
@@ -125,30 +134,42 @@ impl ContextdServer {
                         Tool {
                             name: "get_status".to_string(),
                             description: "Get indexing status and statistics.".to_string(),
-                            inputSchema: serde_json::json!({
+                            input_schema: serde_json::json!({
                                 "type": "object",
                                 "properties": {},
                             }),
                         },
                     ],
                 }).unwrap())
-            },
+            }
             "tools/call" => {
                 eprintln!("MCP tools/call request received");
                 if let Some(params) = req.params {
                     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    let args = params.get("arguments").unwrap_or(&serde_json::json!({})).clone();
+                    let args = params
+                        .get("arguments")
+                        .unwrap_or(&serde_json::json!({}))
+                        .clone();
 
                     match name {
                         "search_context" => {
                             let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
-                            let min_score = args.get("min_score").and_then(|v| v.as_f64()).map(|v| v as f32);
+                            let limit =
+                                args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+                            let min_score = args
+                                .get("min_score")
+                                .and_then(|v| v.as_f64())
+                                .map(|v| v as f32);
 
                             // Parse file_types
-                            let file_types = args.get("file_types").and_then(|v| v.as_array()).map(|arr| {
-                                arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<_>>()
-                            });
+                            let file_types =
+                                args.get("file_types")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                            .collect::<Vec<_>>()
+                                    });
 
                             eprintln!("Executing search: '{}' (limit: {})", query, limit);
 
@@ -166,14 +187,17 @@ impl ContextdServer {
                                         ..Default::default()
                                     };
 
-                                    let results = self.db.search_chunks_enhanced(&embedding, &options);
+                                    let results =
+                                        self.db.search_chunks_enhanced(&embedding, &options);
 
                                     match results {
                                         Ok(hits) => {
                                             let mut text = String::new();
                                             for hit in hits {
-                                                text.push_str(&format!("File: {}\nScore: {:.2}\n\n{}\n\n---\n\n",
-                                                    hit.file_path, hit.score, hit.content));
+                                                text.push_str(&format!(
+                                                    "File: {}\nScore: {:.2}\n\n{}\n\n---\n\n",
+                                                    hit.file_path, hit.score, hit.content
+                                                ));
                                             }
                                             if text.is_empty() {
                                                 text = "No results found.".to_string();
@@ -183,43 +207,43 @@ impl ContextdServer {
                                                     kind: "text".to_string(),
                                                     text,
                                                 }],
-                                                isError: false,
-                                            }).unwrap())
-                                        },
+                                                is_error: false,
+                                            })
+                                            .unwrap())
+                                        }
                                         Err(e) => Err(JsonRpcError {
                                             code: -32603,
                                             message: format!("Search failed: {}", e),
                                         }),
                                     }
-                                },
+                                }
                                 Err(e) => Err(JsonRpcError {
                                     code: -32603,
                                     message: format!("Embedding failed: {}", e),
                                 }),
                             }
-                        },
-                        "get_status" => {
-                            match self.db.get_stats() {
-                                Ok(stats) => {
-                                    let text = format!(
-                                        "Indexed Files: {}\nTotal Chunks: {}\nDatabase Size: {:.2} MB",
-                                        stats.file_count,
-                                        stats.chunk_count,
-                                        stats.db_size as f64 / 1024.0 / 1024.0
-                                    );
-                                    Ok(serde_json::to_value(CallToolResult {
-                                        content: vec![Content {
-                                            kind: "text".to_string(),
-                                            text,
-                                        }],
-                                        isError: false,
-                                    }).unwrap())
-                                },
-                                Err(e) => Err(JsonRpcError {
-                                    code: -32603,
-                                    message: format!("Failed to get stats: {}", e),
-                                }),
+                        }
+                        "get_status" => match self.db.get_stats() {
+                            Ok(stats) => {
+                                let text = format!(
+                                    "Indexed Files: {}\nTotal Chunks: {}\nDatabase Size: {:.2} MB",
+                                    stats.file_count,
+                                    stats.chunk_count,
+                                    stats.db_size as f64 / 1024.0 / 1024.0
+                                );
+                                Ok(serde_json::to_value(CallToolResult {
+                                    content: vec![Content {
+                                        kind: "text".to_string(),
+                                        text,
+                                    }],
+                                    is_error: false,
+                                })
+                                .unwrap())
                             }
+                            Err(e) => Err(JsonRpcError {
+                                code: -32603,
+                                message: format!("Failed to get stats: {}", e),
+                            }),
                         },
                         _ => Err(JsonRpcError {
                             code: -32601,
@@ -232,7 +256,7 @@ impl ContextdServer {
                         message: "Missing params".to_string(),
                     })
                 }
-            },
+            }
             _ => Err(JsonRpcError {
                 code: -32601,
                 message: format!("Method not found: {}", req.method),
@@ -278,7 +302,7 @@ pub async fn run_mcp_server(db: Database, embedder: Arc<Embedder>, config: Confi
                     eprintln!("Sending response: {}", json);
                     println!("{}", json);
                 }
-            },
+            }
             Err(e) => {
                 eprintln!("Failed to parse JSON-RPC: {} (line: {})", e, line);
                 // Send parse error
