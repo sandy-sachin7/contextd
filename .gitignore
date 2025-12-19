@@ -30,7 +30,7 @@ models/
 # Logs
 *.log
 Project Documentation (Local only)
-Personal_plan.md
+# Personal_plan.md
 
 # OS
 .DS_Store
