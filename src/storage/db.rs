@@ -138,71 +138,6 @@ impl Database {
         Ok(())
     }
 
-    pub fn search_chunks(
-        &self,
-        query_embedding: &[f32],
-        limit: usize,
-        start_time: Option<u64>,
-        end_time: Option<u64>,
-    ) -> Result<Vec<(String, f32)>> {
-        let conn = self.conn.lock().unwrap();
-
-        // Build query with optional time filters
-        let mut sql = "SELECT c.content, c.embedding FROM chunks c JOIN files f ON c.file_id = f.id WHERE c.embedding IS NOT NULL".to_string();
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-
-        if let Some(start) = start_time {
-            sql.push_str(" AND f.last_modified >= ?");
-            params.push(Box::new(start));
-        }
-
-        if let Some(end) = end_time {
-            sql.push_str(" AND f.last_modified <= ?");
-            params.push(Box::new(end));
-        }
-
-        let mut stmt = conn.prepare(&sql)?;
-
-        // Map params to reference slice
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-
-        let chunk_iter = stmt.query_map(params_refs.as_slice(), |row| {
-            let content: String = row.get(0)?;
-            let embedding_blob: Vec<u8> = row.get(1)?;
-            Ok((content, embedding_blob))
-        })?;
-
-        let mut scored_chunks = Vec::new();
-
-        for chunk in chunk_iter {
-            let (content, embedding_blob) = chunk?;
-
-            // Convert bytes back to Vec<f32>
-            let embedding: Vec<f32> = embedding_blob
-                .chunks_exact(4)
-                .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
-                .collect();
-
-            if embedding.len() != query_embedding.len() {
-                continue; // Skip dimension mismatch
-            }
-
-            // Cosine similarity (assuming normalized vectors)
-            let score: f32 = embedding
-                .iter()
-                .zip(query_embedding)
-                .map(|(a, b)| a * b)
-                .sum();
-            scored_chunks.push((content, score));
-        }
-
-        // Sort by score descending
-        scored_chunks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored_chunks.truncate(limit);
-
-        Ok(scored_chunks)
-    }
-
     /// Get database statistics
     pub fn get_stats(&self) -> Result<DbStats> {
         let conn = self.conn.lock().unwrap();
@@ -228,13 +163,14 @@ impl Database {
     pub fn search_chunks_enhanced(
         &self,
         query_embedding: &[f32],
-        limit: usize,
-        start_time: Option<u64>,
-        end_time: Option<u64>,
-        file_types: Option<&[String]>,
-        paths: Option<&[String]>,
-        min_score: Option<f32>,
+        options: &SearchOptions,
     ) -> Result<Vec<SearchResult>> {
+        let limit = options.limit.unwrap_or(10);
+        let start_time = options.start_time;
+        let end_time = options.end_time;
+        let file_types = options.file_types.as_deref();
+        let paths = options.paths.as_deref();
+        let min_score = options.min_score;
         let conn = self.conn.lock().unwrap();
 
         // Build query with optional filters
@@ -338,6 +274,17 @@ pub struct DbStats {
     pub file_count: u64,
     pub chunk_count: u64,
     pub db_size: u64,
+}
+
+/// Search options for enhanced chunk search
+#[derive(Default)]
+pub struct SearchOptions {
+    pub limit: Option<usize>,
+    pub start_time: Option<u64>,
+    pub end_time: Option<u64>,
+    pub file_types: Option<Vec<String>>,
+    pub paths: Option<Vec<String>>,
+    pub min_score: Option<f32>,
 }
 
 /// Enhanced search result with metadata

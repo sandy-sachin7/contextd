@@ -148,18 +148,18 @@ async fn handle_query(
     };
 
     // Search DB
-    let limit = payload.limit.unwrap_or(5);
     let db = state.db.lock().unwrap();
 
-    let results = match db.search_chunks_enhanced(
-        &embedding,
-        limit,
-        payload.start_time,
-        payload.end_time,
-        payload.file_types.as_deref(),
-        payload.paths.as_deref(),
-        payload.min_score,
-    ) {
+    let options = crate::storage::db::SearchOptions {
+        limit: Some(payload.limit.unwrap_or(5)),
+        start_time: payload.start_time,
+        end_time: payload.end_time,
+        file_types: payload.file_types,
+        paths: payload.paths,
+        min_score: payload.min_score,
+    };
+
+    let results = match db.search_chunks_enhanced(&embedding, &options) {
         Ok(res) => res
             .into_iter()
             .map(|r| QueryResult {
