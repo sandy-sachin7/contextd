@@ -169,6 +169,17 @@ docx = ["pandoc", "-t", "plain"]
 py = ["cat"]  # Or use native parser
 ```
 
+## Ignoring Files
+
+contextd respects `.gitignore` by default. You can also create a `.contextignore` file to exclude specific files from indexing without affecting git:
+
+```gitignore
+# .contextignore
+*.log
+temp/
+secret_keys.json
+```
+
 ## Use Cases
 
 ### 1. AI-Powered Code Understanding
