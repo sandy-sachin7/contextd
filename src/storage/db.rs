@@ -300,9 +300,7 @@ impl Database {
         for (rank, res) in fts_results.iter().enumerate() {
             let score = 1.0 / (k + (rank as f32 + 1.0));
             *scores.entry(res.id).or_insert(0.0) += score;
-            if !results_map.contains_key(&res.id) {
-                results_map.insert(res.id, res.clone());
-            }
+            results_map.entry(res.id).or_insert_with(|| res.clone());
         }
 
         let mut final_results: Vec<SearchResult> = results_map.into_values().collect();

@@ -365,7 +365,7 @@ pub fn chunk_pdf(path: &std::path::Path) -> Result<Vec<Chunk>> {
 
     // Split by double newlines (paragraphs)
     // Also consider page breaks as boundaries
-    let _splits = content.split(|c| c == '\n' || c == '\x0c');
+    let _splits = content.split(['\n', '\x0c']);
     // Actually, splitting by \n might be too aggressive if it's just line wrapping.
     // Let's split by \n\n or \x0c
 
