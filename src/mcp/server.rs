@@ -7,7 +7,7 @@ use crate::indexer::embeddings::Embedder;
 use crate::storage::db::{Database, SearchOptions};
 use rmcp::{
     handler::server::tool::ToolRouter,
-    model::{CallToolResult, Content, ServerInfo, Implementation},
+    model::{CallToolResult, Content, Implementation, ServerInfo},
     tool, tool_router, ErrorData as McpError, ServerHandler,
 };
 use schemars::JsonSchema;
@@ -84,9 +84,10 @@ impl ContextdServer {
             ..Default::default()
         };
 
-        let db = self.db.lock().map_err(|e| {
-            McpError::internal_error(format!("Database lock error: {}", e), None)
-        })?;
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("Database lock error: {}", e), None))?;
 
         let results = db
             .search_chunks_enhanced(&embedding, &options)
@@ -117,9 +118,10 @@ impl ContextdServer {
         description = "Get the current indexing status including file count, chunk count, and database size."
     )]
     async fn get_status(&self) -> Result<CallToolResult, McpError> {
-        let db = self.db.lock().map_err(|e| {
-            McpError::internal_error(format!("Database lock error: {}", e), None)
-        })?;
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("Database lock error: {}", e), None))?;
 
         let stats = db
             .get_stats()
