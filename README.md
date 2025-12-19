@@ -18,6 +18,7 @@ Unlike cloud-based solutions, `contextd` keeps all your data on your machine, en
     -   **Markdown**: Header-based section splitting.
     -   **PDF**: Page-level splitting.
 -   **📂 Multi-Format Support**: Native support for `.txt`, `.md`, `.pdf`, and `.rs`.
+-   **🤖 MCP Server**: Native support for the [Model Context Protocol](https://modelcontextprotocol.io/), allowing Claude Desktop and other AI assistants to directly search your codebase.
 -   **🔌 Extensible Plugin System**: Add support for any file type (DOCX, EPUB, etc.) via external command-line parsers.
 -   **🛡️ Systems Brutality**: Built for robustness with adaptive debouncing, `.contextignore` support, and efficient resource usage.
 -   **⚙️ Highly Configurable**: Customize everything via `contextd.toml`.
@@ -76,7 +77,7 @@ target/
 secret_*.txt
 ```
 
-### 3. Running the Daemon
+### 3. Running the Daemon (Background Indexer)
 
 ```bash
 ./target/release/contextd
@@ -84,7 +85,32 @@ secret_*.txt
 
 You should see logs indicating the server has started and is watching your directories.
 
-### 4. API Usage
+### 4. 🤖 MCP Server Integration (Claude / Continue)
+
+contextd can run as an MCP server, allowing AI assistants to directly query your codebase.
+
+**Run in MCP Mode:**
+```bash
+./target/release/contextd --mcp --config /path/to/contextd.toml
+```
+
+**Integration Guides:**
+-   [Claude Desktop Integration](docs/claude-integration.md)
+-   [Continue.dev Integration](docs/continue-integration.md)
+
+**Quick Claude Config (`claude_desktop_config.json`):**
+```json
+{
+  "mcpServers": {
+    "contextd": {
+      "command": "/absolute/path/to/contextd",
+      "args": ["--mcp", "--config", "/absolute/path/to/contextd.toml"]
+    }
+  }
+}
+```
+
+### 5. API Usage (REST)
 
 The daemon exposes a REST API for querying context.
 
