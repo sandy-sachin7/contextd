@@ -1,0 +1,72 @@
+[server]
+host = "127.0.0.1"
+port = 3030
+
+[storage]
+db_path = "contextd.db"
+model_path = "models"
+
+[watch]
+paths = ["."]  # Watch current directory by default
+
+[plugins]
+# === Programming Languages ===
+py = ["cat"]
+js = ["cat"]
+ts = ["cat"]
+jsx = ["cat"]
+tsx = ["cat"]
+go = ["cat"]
+java = ["cat"]
+c = ["cat"]
+cpp = ["cat"]
+h = ["cat"]
+hpp = ["cat"]
+cs = ["cat"]
+rb = ["cat"]
+php = ["cat"]
+swift = ["cat"]
+kt = ["cat"]
+scala = ["cat"]
+lua = ["cat"]
+sh = ["cat"]
+bash = ["cat"]
+sql = ["cat"]
+r = ["cat"]
+jl = ["cat"]
+hs = ["cat"]
+ex = ["cat"]
+clj = ["cat"]
+zig = ["cat"]
+
+# === Documents ===
+# PDF: Use the wrapper script (comes with this repo)
+# For better quality with equations, install marker-pdf and use:
+# pdf = ["marker_single", "--output_format", "markdown"]
+pdf = ["./scripts/pdftotext.sh"]
+
+# Office docs (requires: apt install pandoc)
+docx = ["pandoc", "-t", "plain"]
+odt = ["pandoc", "-t", "plain"]
+rtf = ["pandoc", "-t", "plain"]
+epub = ["pandoc", "-t", "plain"]
+html = ["pandoc", "-t", "plain"]
+
+# LaTeX source
+tex = ["cat"]
+
+# === Data Formats ===
+json = ["cat"]
+yaml = ["cat"]
+yml = ["cat"]
+xml = ["cat"]
+csv = ["cat"]
+env = ["cat"]
+ini = ["cat"]
+proto = ["cat"]
+graphql = ["cat"]
+gql = ["cat"]
+
+# === Notebooks ===
+# Requires: pip install jupyter nbconvert
+# ipynb = ["jupyter", "nbconvert", "--to", "markdown", "--stdout"]

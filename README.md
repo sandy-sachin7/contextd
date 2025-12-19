@@ -62,7 +62,6 @@ paths = ["/path/to/your/notes", "/path/to/your/code"]
 # Map file extensions to external commands
 # The command receives the file path as the last argument
 docx = ["pandoc", "-t", "plain"]
-rs = ["cat"] # Example: Treat Rust files as plain text
 ```
 
 ### 2. Ignoring Files
@@ -96,24 +95,21 @@ The daemon exposes a REST API for querying context.
 {
   "query": "How does the authentication system work?",
   "limit": 5,
-  "start_time": 1700000000, // Optional: Filter by modification time
-  "end_time": 1720000000    // Optional
+  "start_time": 1700000000,
+  "end_time": 1720000000
 }
 ```
 
 **Response**:
 ```json
-[
-  {
-    "content": "The auth system uses JWT tokens...",
-    "score": 0.89,
-    "metadata": {
-      "path": "/src/auth.rs",
-      "last_modified": 1710000000
+{
+  "results": [
+    {
+      "content": "The auth system uses JWT tokens...",
+      "score": 0.89
     }
-  },
-  ...
-]
+  ]
+}
 ```
 
 **Example with curl**:
@@ -123,33 +119,344 @@ curl -X POST http://localhost:3030/query \
   -d '{"query": "database schema", "limit": 3}'
 ```
 
+---
+
 ## 🧩 Plugin System
 
-`contextd` is designed to be extensible. You can add support for any file format by defining a plugin in `contextd.toml`.
+`contextd` is designed to be extensible. You can add support for **any file format** by defining plugins in `contextd.toml`. A plugin is simply an external command that takes a file path as its last argument and outputs text to `stdout`.
 
-A plugin is simply an external command that takes a file path as its last argument and outputs text to `stdout`.
+### How Plugins Work
 
-**Example: Indexing Python files using `cat`**
+```
+File → Plugin Command → Text Output → Chunker → Embedder → Database
+```
+
+The plugin command receives the file path as the **last argument** and must output extracted text to stdout.
+
+---
+
+## 📚 Recommended Plugins
+
+Below is a comprehensive list of recommended plugins for indexing any codebase or document format.
+
+### Programming Languages
+
+Use `cat` for simple text extraction. For semantic chunking, prefer native Tree-sitter support (currently Rust only).
+
 ```toml
 [plugins]
+# Python
 py = ["cat"]
+
+# JavaScript / TypeScript
+js = ["cat"]
+ts = ["cat"]
+jsx = ["cat"]
+tsx = ["cat"]
+
+# Go
+go = ["cat"]
+
+# Java
+java = ["cat"]
+
+# C / C++
+c = ["cat"]
+cpp = ["cat"]
+cc = ["cat"]
+h = ["cat"]
+hpp = ["cat"]
+
+# C#
+cs = ["cat"]
+
+# Ruby
+rb = ["cat"]
+
+# PHP
+php = ["cat"]
+
+# Swift
+swift = ["cat"]
+
+# Kotlin
+kt = ["cat"]
+kts = ["cat"]
+
+# Scala
+scala = ["cat"]
+
+# Lua
+lua = ["cat"]
+
+# Shell Scripts
+sh = ["cat"]
+bash = ["cat"]
+zsh = ["cat"]
+
+# SQL
+sql = ["cat"]
+
+# R
+r = ["cat"]
+
+# Julia
+jl = ["cat"]
+
+# Haskell
+hs = ["cat"]
+
+# Elixir
+ex = ["cat"]
+exs = ["cat"]
+
+# Clojure
+clj = ["cat"]
+cljs = ["cat"]
+
+# Zig
+zig = ["cat"]
+
+# Nim
+nim = ["cat"]
+
+# V
+v = ["cat"]
 ```
 
-**Example: Indexing DOCX using `pandoc`**
+---
+
+### Document Formats
+
+#### PDF Files
+
+For **complex PDFs** with LaTeX equations, tables, and diagrams:
+
+| Tool | Quality | Install | Plugin Config |
+|------|---------|---------|---------------|
+| **Marker** 🏆 | Excellent (preserves LaTeX) | `pip install marker-pdf` | `pdf = ["marker_single", "--output_format", "markdown"]` |
+| **pdftotext** | Good (text only) | `apt install poppler-utils` | `pdf = ["pdftotext", "-layout", "-"]` |
+| **Docling** | Good (structured) | `pip install docling` | `pdf = ["docling", "--to", "md"]` |
+
+**Using pdftotext** (included in `poppler-utils`):
+
+Since contextd appends the file path as the last argument, pdftotext needs a wrapper script:
+
+```bash
+# scripts/pdftotext.sh (already included in this repo)
+#!/bin/bash
+pdftotext -layout "$1" -
+```
+
 ```toml
 [plugins]
-docx = ["pandoc", "-t", "plain"]
+# pdftotext via wrapper script (text extraction, good for most documents)
+pdf = ["./scripts/pdftotext.sh"]
 ```
+
+**Using Marker** (for research papers with LaTeX equations):
+
+```bash
+pip install marker-pdf
+```
+
+```toml
+[plugins]
+# Marker (best quality, preserves LaTeX equations)
+pdf = ["marker_single", "--output_format", "markdown"]
+```
+
+> **🏆 Shoutout to [Marker](https://github.com/VikParuchuri/marker)**: An excellent open-source tool for converting PDFs to Markdown with LaTeX equation preservation. Perfect for indexing research papers!
+
+---
+
+#### Office Documents
+
+Requires [Pandoc](https://pandoc.org/) - the universal document converter.
+
+```bash
+# Install Pandoc
+sudo apt install pandoc        # Debian/Ubuntu
+brew install pandoc            # macOS
+```
+
+```toml
+[plugins]
+# Microsoft Word
+docx = ["pandoc", "-t", "plain"]
+doc = ["catdoc"]  # For legacy .doc files (apt install catdoc)
+
+# OpenDocument
+odt = ["pandoc", "-t", "plain"]
+
+# Rich Text Format
+rtf = ["pandoc", "-t", "plain"]
+
+# EPUB (eBooks)
+epub = ["pandoc", "-t", "plain"]
+
+# HTML
+html = ["pandoc", "-t", "plain"]
+htm = ["pandoc", "-t", "plain"]
+```
+
+> **🏆 Shoutout to [Pandoc](https://pandoc.org/)**: The Swiss Army knife for document conversion. Supports 40+ formats!
+
+---
+
+#### LaTeX Source Files
+
+```toml
+[plugins]
+# LaTeX source (index as-is for semantic search on equations)
+tex = ["cat"]
+```
+
+---
+
+### Data & Config Formats
+
+```toml
+[plugins]
+# JSON
+json = ["cat"]
+
+# YAML
+yaml = ["cat"]
+yml = ["cat"]
+
+# TOML
+toml = ["cat"]
+
+# XML
+xml = ["cat"]
+
+# CSV (consider jq for structured extraction)
+csv = ["cat"]
+
+# Environment files
+env = ["cat"]
+
+# INI configs
+ini = ["cat"]
+
+# Protobuf definitions
+proto = ["cat"]
+
+# GraphQL schemas
+graphql = ["cat"]
+gql = ["cat"]
+```
+
+---
+
+### Jupyter Notebooks
+
+```bash
+# Install nbconvert
+pip install jupyter nbconvert
+```
+
+```toml
+[plugins]
+# Jupyter Notebooks (extract to markdown)
+ipynb = ["jupyter", "nbconvert", "--to", "markdown", "--stdout"]
+```
+
+> **🏆 Shoutout to [Jupyter](https://jupyter.org/)**: The de facto standard for interactive computing.
+
+---
+
+### Complete Example Configuration
+
+Here's a comprehensive `contextd.toml` for indexing a full-stack polyglot codebase:
+
+```toml
+[server]
+host = "127.0.0.1"
+port = 3030
+
+[storage]
+db_path = "contextd.db"
+model_path = "models"
+
+[watch]
+paths = [
+    "/home/user/projects/myapp",
+    "/home/user/notes"
+]
+
+[plugins]
+# === Programming Languages ===
+py = ["cat"]
+js = ["cat"]
+ts = ["cat"]
+jsx = ["cat"]
+tsx = ["cat"]
+go = ["cat"]
+java = ["cat"]
+c = ["cat"]
+cpp = ["cat"]
+h = ["cat"]
+cs = ["cat"]
+rb = ["cat"]
+php = ["cat"]
+swift = ["cat"]
+kt = ["cat"]
+scala = ["cat"]
+lua = ["cat"]
+sh = ["cat"]
+sql = ["cat"]
+
+# === Documents ===
+pdf = ["pdftotext", "-layout"]
+docx = ["pandoc", "-t", "plain"]
+odt = ["pandoc", "-t", "plain"]
+epub = ["pandoc", "-t", "plain"]
+html = ["pandoc", "-t", "plain"]
+tex = ["cat"]
+
+# === Data Formats ===
+json = ["cat"]
+yaml = ["cat"]
+yml = ["cat"]
+xml = ["cat"]
+csv = ["cat"]
+proto = ["cat"]
+graphql = ["cat"]
+
+# === Notebooks ===
+# ipynb = ["jupyter", "nbconvert", "--to", "markdown", "--stdout"]
+```
+
+---
 
 ## 🏗️ Architecture
 
 1.  **Watcher**: Uses `notify-debouncer-mini` to listen for file system events. It batches rapid changes to avoid CPU spikes.
 2.  **Filter**: Checks `.contextignore` and `.gitignore` to skip irrelevant files.
 3.  **Parser**: Routes files to the appropriate parser (native or plugin) based on extension.
-4.  **Chunker**: Splits text into semantic chunks (currently paragraph-based).
+4.  **Chunker**: Splits text into semantic chunks (paragraph-based for plugins, AST-based for native formats).
 5.  **Embedder**: Generates vector embeddings using the local ONNX model.
-6.  **Storage**: Stores chunks and embeddings in SQLite (with `vector0` extension or blob storage).
+6.  **Storage**: Stores chunks and embeddings in SQLite.
 7.  **API**: Serves semantic search queries via `axum`.
+
+---
+
+## 🙏 Acknowledgments
+
+This project wouldn't be possible without these amazing open-source tools:
+
+| Tool | Purpose | Link |
+|------|---------|------|
+| **Marker** | PDF → Markdown with LaTeX | [github.com/VikParuchuri/marker](https://github.com/VikParuchuri/marker) |
+| **Pandoc** | Universal document converter | [pandoc.org](https://pandoc.org/) |
+| **Tree-sitter** | Semantic code parsing | [tree-sitter.github.io](https://tree-sitter.github.io/) |
+| **all-MiniLM-L6-v2** | Sentence embeddings | [Hugging Face](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) |
+| **ONNX Runtime** | Local ML inference | [onnxruntime.ai](https://onnxruntime.ai/) |
+| **poppler-utils** | PDF text extraction | [poppler.freedesktop.org](https://poppler.freedesktop.org/) |
+
+---
 
 ## 🤝 Contributing
 
