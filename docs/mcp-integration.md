@@ -29,11 +29,8 @@ contextd provides semantic search capabilities to Claude Desktop through the MCP
 
 3. **Download the embedding model**:
    ```bash
-   mkdir -p ~/.contextd/models
-   # Download all-MiniLM-L6-v2 ONNX model
-   cd ~/.contextd/models
-   curl -LO https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx
-   curl -LO https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json
+   # Use the built-in setup command
+   cargo run -- setup
    ```
 
 ## Claude Desktop Configuration
@@ -61,8 +58,8 @@ Add contextd to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "contextd": {
-      "command": "/path/to/contextd",
-      "args": ["--mcp", "--config", "/path/to/contextd.toml"],
+      "command": "/path/to/contextd/target/release/contextd",
+      "args": ["mcp", "--config", "/path/to/contextd.toml"],
       "env": {}
     }
   }
@@ -70,6 +67,35 @@ Add contextd to your `claude_desktop_config.json`:
 ```
 
 Replace `/path/to/contextd` with the actual path to your built binary (e.g., `target/release/contextd`).
+
+## Cline / Roo Code (VSCode)
+
+1. Open the MCP Servers settings (usually via the "MCP Servers" tab or command palette).
+2. Add a new server:
+   - **Name**: `contextd`
+   - **Command**: `/path/to/contextd/target/release/contextd`
+   - **Args**: `mcp`, `--config`, `/path/to/contextd.toml`
+
+## Continue (VSCode / JetBrains)
+
+Add to your `config.json`:
+
+```json
+"mcpServers": [
+  {
+    "name": "contextd",
+    "command": "/path/to/contextd/target/release/contextd",
+    "args": ["mcp", "--config", "/path/to/contextd.toml"]
+  }
+]
+```
+
+## GitHub Copilot
+
+GitHub Copilot is expected to add MCP support soon. Once available, the configuration will likely follow the standard MCP server format:
+
+- **Command**: `/path/to/contextd/target/release/contextd`
+- **Args**: `["mcp", "--config", "/path/to/contextd.toml"]`
 
 ## Available Tools
 
@@ -102,13 +128,13 @@ Get the current indexing status.
 
 1. **Start contextd in daemon mode first** to build the initial index:
    ```bash
-   ./contextd --config ./contextd.toml
+   ./target/release/contextd daemon --config ./contextd.toml
    ```
    Wait for the initial indexing to complete.
 
-2. **Restart Claude Desktop** after configuring `claude_desktop_config.json`.
+2. **Restart your MCP Client** (Claude Desktop, VSCode, etc.) after configuring.
 
-3. **Verify the connection** by asking Claude:
+3. **Verify the connection** by asking your AI assistant:
    > "Use contextd to get the indexing status"
 
 ## Troubleshooting
