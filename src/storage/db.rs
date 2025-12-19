@@ -207,29 +207,14 @@ impl Database {
     pub fn get_stats(&self) -> Result<DbStats> {
         let conn = self.conn.lock().unwrap();
 
-        let file_count: u64 = conn.query_row(
-            "SELECT COUNT(*) FROM files",
-            [],
-            |row| row.get(0),
-        )?;
+        let file_count: u64 = conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
 
-        let chunk_count: u64 = conn.query_row(
-            "SELECT COUNT(*) FROM chunks",
-            [],
-            |row| row.get(0),
-        )?;
+        let chunk_count: u64 =
+            conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
 
         // Get database page count and page size for size estimate
-        let page_count: u64 = conn.query_row(
-            "PRAGMA page_count",
-            [],
-            |row| row.get(0),
-        )?;
-        let page_size: u64 = conn.query_row(
-            "PRAGMA page_size",
-            [],
-            |row| row.get(0),
-        )?;
+        let page_count: u64 = conn.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+        let page_size: u64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))?;
         let db_size = page_count * page_size;
 
         Ok(DbStats {
@@ -256,7 +241,8 @@ impl Database {
         let mut sql = "SELECT c.content, c.embedding, f.path, f.last_modified
                        FROM chunks c
                        JOIN files f ON c.file_id = f.id
-                       WHERE c.embedding IS NOT NULL".to_string();
+                       WHERE c.embedding IS NOT NULL"
+            .to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(start) = start_time {
@@ -286,11 +272,7 @@ impl Database {
             let (content, embedding_blob, file_path, last_modified) = chunk?;
 
             // Extract file extension
-            let file_type = file_path
-                .rsplit('.')
-                .next()
-                .unwrap_or("")
-                .to_lowercase();
+            let file_type = file_path.rsplit('.').next().unwrap_or("").to_lowercase();
 
             // Apply file type filter
             if let Some(types) = file_types {
@@ -340,7 +322,11 @@ impl Database {
         }
 
         // Sort by score descending
-        scored_chunks.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored_chunks.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         scored_chunks.truncate(limit);
 
         Ok(scored_chunks)

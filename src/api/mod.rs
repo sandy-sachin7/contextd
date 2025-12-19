@@ -115,8 +115,13 @@ async fn handle_health(State(state): State<AppState>) -> Json<HealthResponse> {
 async fn handle_status(State(state): State<AppState>) -> Result<Json<StatusResponse>, StatusCode> {
     let uptime = current_time() - state.start_time;
 
-    let db = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let stats = db.get_stats().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let stats = db
+        .get_stats()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(StatusResponse {
         status: "ok".to_string(),

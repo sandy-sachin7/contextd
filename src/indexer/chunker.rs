@@ -455,7 +455,9 @@ type ID = string | number;
         let chunks = chunk_typescript(content).unwrap();
         assert!(chunks.len() >= 2);
         assert!(chunks.iter().any(|c| c.content.contains("interface User")));
-        assert!(chunks.iter().any(|c| c.content.contains("function getUser")));
+        assert!(chunks
+            .iter()
+            .any(|c| c.content.contains("function getUser")));
     }
 
     #[test]
