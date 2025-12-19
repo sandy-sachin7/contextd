@@ -10,6 +10,10 @@ pub struct Chunk {
 pub fn chunk_by_type(content: &str, ext: &str) -> Result<Vec<Chunk>> {
     match ext {
         "rs" => chunk_rust(content),
+        "py" => chunk_python(content),
+        "js" | "jsx" => chunk_javascript(content),
+        "ts" | "tsx" => chunk_typescript(content),
+        "go" => chunk_go(content),
         "md" | "markdown" => chunk_markdown(content),
         _ => chunk_text(content),
     }
@@ -48,6 +52,180 @@ pub fn chunk_rust(content: &str) -> Result<Vec<Chunk>> {
     }
 
     // If no chunks found (e.g. script or just comments), fallback to text chunking
+    if chunks.is_empty() && !content.trim().is_empty() {
+        return chunk_text(content);
+    }
+
+    Ok(chunks)
+}
+
+/// Semantic chunking for Python using Tree-sitter
+pub fn chunk_python(content: &str) -> Result<Vec<Chunk>> {
+    let mut parser = Parser::new();
+    let language = tree_sitter_python::language();
+    parser.set_language(language)?;
+
+    let tree = parser
+        .parse(content, None)
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse Python code"))?;
+    let root_node = tree.root_node();
+    let mut chunks = Vec::new();
+    let mut cursor = root_node.walk();
+
+    for child in root_node.children(&mut cursor) {
+        let kind = child.kind();
+        // Chunk by function definitions, class definitions, and decorated definitions
+        if matches!(
+            kind,
+            "function_definition" | "class_definition" | "decorated_definition"
+        ) {
+            let start_byte = child.start_byte() as u64;
+            let end_byte = child.end_byte() as u64;
+            let chunk_content = &content[child.start_byte()..child.end_byte()];
+
+            chunks.push(Chunk {
+                start: start_byte,
+                end: end_byte,
+                content: chunk_content.to_string(),
+            });
+        }
+    }
+
+    if chunks.is_empty() && !content.trim().is_empty() {
+        return chunk_text(content);
+    }
+
+    Ok(chunks)
+}
+
+/// Semantic chunking for JavaScript using Tree-sitter
+pub fn chunk_javascript(content: &str) -> Result<Vec<Chunk>> {
+    let mut parser = Parser::new();
+    let language = tree_sitter_javascript::language();
+    parser.set_language(language)?;
+
+    let tree = parser
+        .parse(content, None)
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse JavaScript code"))?;
+    let root_node = tree.root_node();
+    let mut chunks = Vec::new();
+    let mut cursor = root_node.walk();
+
+    for child in root_node.children(&mut cursor) {
+        let kind = child.kind();
+        // Chunk by functions, classes, and exports
+        if matches!(
+            kind,
+            "function_declaration"
+                | "class_declaration"
+                | "export_statement"
+                | "lexical_declaration"
+                | "expression_statement"
+        ) {
+            // For expression_statement, only include if it's a significant size
+            if kind == "expression_statement" && child.end_byte() - child.start_byte() < 50 {
+                continue;
+            }
+
+            let start_byte = child.start_byte() as u64;
+            let end_byte = child.end_byte() as u64;
+            let chunk_content = &content[child.start_byte()..child.end_byte()];
+
+            chunks.push(Chunk {
+                start: start_byte,
+                end: end_byte,
+                content: chunk_content.to_string(),
+            });
+        }
+    }
+
+    if chunks.is_empty() && !content.trim().is_empty() {
+        return chunk_text(content);
+    }
+
+    Ok(chunks)
+}
+
+/// Semantic chunking for TypeScript using Tree-sitter
+pub fn chunk_typescript(content: &str) -> Result<Vec<Chunk>> {
+    let mut parser = Parser::new();
+    let language = tree_sitter_typescript::language_typescript();
+    parser.set_language(language)?;
+
+    let tree = parser
+        .parse(content, None)
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse TypeScript code"))?;
+    let root_node = tree.root_node();
+    let mut chunks = Vec::new();
+    let mut cursor = root_node.walk();
+
+    for child in root_node.children(&mut cursor) {
+        let kind = child.kind();
+        // Chunk by functions, classes, interfaces, types, and exports
+        if matches!(
+            kind,
+            "function_declaration"
+                | "class_declaration"
+                | "interface_declaration"
+                | "type_alias_declaration"
+                | "export_statement"
+                | "lexical_declaration"
+        ) {
+            let start_byte = child.start_byte() as u64;
+            let end_byte = child.end_byte() as u64;
+            let chunk_content = &content[child.start_byte()..child.end_byte()];
+
+            chunks.push(Chunk {
+                start: start_byte,
+                end: end_byte,
+                content: chunk_content.to_string(),
+            });
+        }
+    }
+
+    if chunks.is_empty() && !content.trim().is_empty() {
+        return chunk_text(content);
+    }
+
+    Ok(chunks)
+}
+
+/// Semantic chunking for Go using Tree-sitter
+pub fn chunk_go(content: &str) -> Result<Vec<Chunk>> {
+    let mut parser = Parser::new();
+    let language = tree_sitter_go::language();
+    parser.set_language(language)?;
+
+    let tree = parser
+        .parse(content, None)
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse Go code"))?;
+    let root_node = tree.root_node();
+    let mut chunks = Vec::new();
+    let mut cursor = root_node.walk();
+
+    for child in root_node.children(&mut cursor) {
+        let kind = child.kind();
+        // Chunk by functions, methods, types, and const/var declarations
+        if matches!(
+            kind,
+            "function_declaration"
+                | "method_declaration"
+                | "type_declaration"
+                | "const_declaration"
+                | "var_declaration"
+        ) {
+            let start_byte = child.start_byte() as u64;
+            let end_byte = child.end_byte() as u64;
+            let chunk_content = &content[child.start_byte()..child.end_byte()];
+
+            chunks.push(Chunk {
+                start: start_byte,
+                end: end_byte,
+                content: chunk_content.to_string(),
+            });
+        }
+    }
+
     if chunks.is_empty() && !content.trim().is_empty() {
         return chunk_text(content);
     }
@@ -223,5 +401,84 @@ More text.
         assert_eq!(chunks[0].content, "Page 1 content");
         assert_eq!(chunks[1].content, "Page 2 content");
         assert_eq!(chunks[2].content, "Page 3 content");
+    }
+
+    #[test]
+    fn test_chunk_python() {
+        let content = r#"
+def hello():
+    print("Hello")
+
+class Greeter:
+    def greet(self):
+        return "Hi"
+"#;
+        let chunks = chunk_python(content).unwrap();
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].content.contains("def hello"));
+        assert!(chunks[1].content.contains("class Greeter"));
+    }
+
+    #[test]
+    fn test_chunk_javascript() {
+        let content = r#"
+function greet() {
+    console.log("Hello");
+}
+
+class Person {
+    constructor(name) {
+        this.name = name;
+    }
+}
+"#;
+        let chunks = chunk_javascript(content).unwrap();
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].content.contains("function greet"));
+        assert!(chunks[1].content.contains("class Person"));
+    }
+
+    #[test]
+    fn test_chunk_typescript() {
+        let content = r#"
+interface User {
+    name: string;
+    age: number;
+}
+
+function getUser(): User {
+    return { name: "Alice", age: 30 };
+}
+
+type ID = string | number;
+"#;
+        let chunks = chunk_typescript(content).unwrap();
+        assert!(chunks.len() >= 2);
+        assert!(chunks.iter().any(|c| c.content.contains("interface User")));
+        assert!(chunks.iter().any(|c| c.content.contains("function getUser")));
+    }
+
+    #[test]
+    fn test_chunk_go() {
+        let content = r#"
+package main
+
+func hello() {
+    fmt.Println("Hello")
+}
+
+type Person struct {
+    Name string
+    Age  int
+}
+
+func (p Person) Greet() string {
+    return "Hi " + p.Name
+}
+"#;
+        let chunks = chunk_go(content).unwrap();
+        assert!(chunks.len() >= 2);
+        assert!(chunks.iter().any(|c| c.content.contains("func hello")));
+        assert!(chunks.iter().any(|c| c.content.contains("type Person")));
     }
 }
