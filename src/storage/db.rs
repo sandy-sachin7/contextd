@@ -202,6 +202,165 @@ impl Database {
 
         Ok(scored_chunks)
     }
+
+    /// Get database statistics
+    pub fn get_stats(&self) -> Result<DbStats> {
+        let conn = self.conn.lock().unwrap();
+
+        let file_count: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM files",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let chunk_count: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM chunks",
+            [],
+            |row| row.get(0),
+        )?;
+
+        // Get database page count and page size for size estimate
+        let page_count: u64 = conn.query_row(
+            "PRAGMA page_count",
+            [],
+            |row| row.get(0),
+        )?;
+        let page_size: u64 = conn.query_row(
+            "PRAGMA page_size",
+            [],
+            |row| row.get(0),
+        )?;
+        let db_size = page_count * page_size;
+
+        Ok(DbStats {
+            file_count,
+            chunk_count,
+            db_size,
+        })
+    }
+
+    /// Enhanced search with file type and path filtering
+    pub fn search_chunks_enhanced(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+        file_types: Option<&[String]>,
+        paths: Option<&[String]>,
+        min_score: Option<f32>,
+    ) -> Result<Vec<SearchResult>> {
+        let conn = self.conn.lock().unwrap();
+
+        // Build query with optional filters
+        let mut sql = "SELECT c.content, c.embedding, f.path, f.last_modified
+                       FROM chunks c
+                       JOIN files f ON c.file_id = f.id
+                       WHERE c.embedding IS NOT NULL".to_string();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(start) = start_time {
+            sql.push_str(" AND f.last_modified >= ?");
+            params.push(Box::new(start));
+        }
+
+        if let Some(end) = end_time {
+            sql.push_str(" AND f.last_modified <= ?");
+            params.push(Box::new(end));
+        }
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+        let chunk_iter = stmt.query_map(params_refs.as_slice(), |row| {
+            let content: String = row.get(0)?;
+            let embedding_blob: Vec<u8> = row.get(1)?;
+            let file_path: String = row.get(2)?;
+            let last_modified: u64 = row.get(3)?;
+            Ok((content, embedding_blob, file_path, last_modified))
+        })?;
+
+        let mut scored_chunks = Vec::new();
+
+        for chunk in chunk_iter {
+            let (content, embedding_blob, file_path, last_modified) = chunk?;
+
+            // Extract file extension
+            let file_type = file_path
+                .rsplit('.')
+                .next()
+                .unwrap_or("")
+                .to_lowercase();
+
+            // Apply file type filter
+            if let Some(types) = file_types {
+                if !types.iter().any(|t| t.to_lowercase() == file_type) {
+                    continue;
+                }
+            }
+
+            // Apply path filter
+            if let Some(path_filters) = paths {
+                if !path_filters.iter().any(|p| file_path.contains(p)) {
+                    continue;
+                }
+            }
+
+            // Convert bytes back to Vec<f32>
+            let embedding: Vec<f32> = embedding_blob
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+                .collect();
+
+            if embedding.len() != query_embedding.len() {
+                continue;
+            }
+
+            // Cosine similarity
+            let score: f32 = embedding
+                .iter()
+                .zip(query_embedding)
+                .map(|(a, b)| a * b)
+                .sum();
+
+            // Apply minimum score filter
+            if let Some(min) = min_score {
+                if score < min {
+                    continue;
+                }
+            }
+
+            scored_chunks.push(SearchResult {
+                content,
+                score,
+                file_path,
+                file_type,
+                last_modified,
+            });
+        }
+
+        // Sort by score descending
+        scored_chunks.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored_chunks.truncate(limit);
+
+        Ok(scored_chunks)
+    }
+}
+
+/// Database statistics
+pub struct DbStats {
+    pub file_count: u64,
+    pub chunk_count: u64,
+    pub db_size: u64,
+}
+
+/// Enhanced search result with metadata
+pub struct SearchResult {
+    pub content: String,
+    pub score: f32,
+    pub file_path: String,
+    pub file_type: String,
+    pub last_modified: u64,
 }
 
 #[cfg(test)]
