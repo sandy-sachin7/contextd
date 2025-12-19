@@ -522,3 +522,44 @@ If the schema changes after indexing real data, the system has failed its archit
 [https://github.com/sandy-sachin7/contextd.git](https://github.com/sandy-sachin7/contextd.git)
 
 All development, branches, and history flow from this source.
+
+---
+
+## 19. Strategic Roadmap (v1)
+
+### 19.1 Model Choice Trade-offs
+*   **Current**: `all-MiniLM-L6-v2` (Fast, 384d, General text).
+*   **Future Options**:
+    *   `codebert-base`: Better for code understanding.
+    *   `unixcoder`: Strong alternative for code.
+*   **Action**: Evaluate trade-offs between speed/size and code-specific accuracy.
+
+### 19.2 Chunking Strategy Improvements
+*   **Markdown**: Preserve heading hierarchy in metadata for better context.
+*   **Rust**: Capture doc comments with associated functions.
+*   **PDF**: Improve page-level chunking to respect paragraph boundaries.
+
+### 19.3 Search Quality Enhancements
+*   **Re-ranking**: Implement cross-encoder for top-K results.
+*   **Hybrid Search**: Combine semantic search with BM25 (keyword) for better precision.
+*   **Metadata Filtering**: Enable queries like "only .rs files modified this week".
+
+### 19.4 Production Readiness
+*   **Incremental Updates**: Avoid re-embedding unchanged files.
+*   **Deduplication**: Strategy to handle similar chunks.
+*   **Resource Management**: Memory usage limits for large codebases.
+*   **Observability**: Progress tracking for initial scans.
+*   **Caching**: Query caching layer.
+
+### 19.5 Developer Experience
+*   **Installation**: Auto-download models or package them.
+*   **CLI**: `contextd query "auth system"` for quick access.
+*   **UI**: Simple Web UI for exploration.
+*   **Docs**: Better configuration examples.
+
+### 19.6 Prioritized Next Steps
+1.  **Better Chunking**: Directly impacts search quality.
+2.  **Hybrid Search**: Semantic + Keyword.
+3.  **CLI Tool**: Lower barrier to entry.
+4.  **Benchmarks**: Show speed/accuracy vs alternatives.
+

@@ -23,6 +23,12 @@ pub struct ServerConfig {
 pub struct StorageConfig {
     pub db_path: PathBuf,
     pub model_path: PathBuf,
+    #[serde(default = "default_model_type")]
+    pub model_type: String,
+}
+
+fn default_model_type() -> String {
+    "all-minilm-l6-v2".to_string()
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -48,6 +54,7 @@ impl Default for Config {
             storage: StorageConfig {
                 db_path: PathBuf::from("contextd.db"),
                 model_path: PathBuf::from("models"),
+                model_type: default_model_type(),
             },
             watch: WatchConfig {
                 paths: vec![PathBuf::from(".")],

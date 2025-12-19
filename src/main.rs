@@ -5,6 +5,8 @@ mod indexer;
 mod mcp;
 mod storage;
 
+mod cli;
+
 use clap::Parser;
 use config::Config;
 use std::path::PathBuf;
@@ -14,46 +16,44 @@ use std::sync::Arc;
 #[command(name = "contextd")]
 #[command(about = "A local-first semantic context daemon for AI agents")]
 #[command(version)]
-struct Args {
+struct Cli {
     /// Path to the configuration file
     #[arg(short, long, default_value = "contextd.toml")]
     config: PathBuf,
 
-    /// Run as an MCP server (for Claude Desktop integration)
-    #[arg(long)]
-    mcp: bool,
+    #[command(subcommand)]
+    command: Option<cli::Commands>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let args = Cli::parse();
 
     let config = if args.config.exists() {
-        eprintln!("Loading config from {}", args.config.display());
+        // eprintln!("Loading config from {}", args.config.display());
         Config::load(&args.config)?
     } else {
-        eprintln!(
-            "Config not found at {}, using defaults",
-            args.config.display()
-        );
+        // eprintln!("Config not found at {}, using defaults", args.config.display());
         Config::default()
     };
 
-    if args.mcp {
-        // Run as MCP server (stdio mode for Claude Desktop)
-        eprintln!("contextd starting in MCP mode...");
-
-        // Initialize components
-        let db = storage::db::Database::new(&config.storage.db_path)?;
-        let embedder = Arc::new(indexer::embeddings::Embedder::new(
-            &config.storage.model_path,
-        )?);
-
-        mcp::run_mcp_server(db, embedder, config).await;
-    } else {
-        // Run as daemon with REST API
-        println!("contextd starting in daemon mode...");
-        daemon::run(config).await?;
+    match args.command.unwrap_or(cli::Commands::Daemon) {
+        cli::Commands::Daemon => {
+            println!("contextd starting in daemon mode...");
+            daemon::run(config).await?;
+        }
+        cli::Commands::Mcp => {
+            eprintln!("contextd starting in MCP mode...");
+            let db = storage::db::Database::new(&config.storage.db_path)?;
+            let embedder = Arc::new(indexer::embeddings::Embedder::new(&config.storage)?);
+            mcp::run_mcp_server(db, embedder, config).await;
+        }
+        cli::Commands::Setup => {
+            cli::handle_setup(&config).await?;
+        }
+        cli::Commands::Query { query } => {
+            cli::handle_query(&config, &query).await?;
+        }
     }
 
     Ok(())

@@ -7,19 +7,27 @@ use std::sync::{mpsc, Arc};
 
 use crate::config::Config;
 
+use indicatif::{ProgressBar, ProgressStyle};
+use tokio::sync::Semaphore;
+
 pub async fn run(config: Config) -> Result<()> {
     // 1. Initialize Storage
     let db = Database::new(&config.storage.db_path)?;
     println!("Database initialized at {:?}", config.storage.db_path);
 
     // 2. Initialize Embedder
-    let embedder = Arc::new(Embedder::new(&config.storage.model_path)?);
+    let embedder = Arc::new(Embedder::new(&config.storage)?);
     println!("Embedder initialized from {:?}", config.storage.model_path);
 
     let config = Arc::new(config);
+    let semaphore = Arc::new(Semaphore::new(4)); // Limit concurrency
 
     // 3. Initial Scan
     println!("Performing initial scan of {:?}", config.watch.paths);
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(ProgressStyle::default_spinner().template("{spinner:.green} {msg}")?);
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+
     for path in &config.watch.paths {
         let walker = WalkBuilder::new(path)
             .standard_filters(true)
@@ -35,8 +43,21 @@ pub async fn run(config: Config) -> Result<()> {
                         let db = db.clone();
                         let embedder = embedder.clone();
                         let path = path.to_path_buf();
+                        let semaphore = semaphore.clone();
+                        let pb = pb.clone();
+
+                        // Acquire permit before spawning to limit active tasks
+                        // For initial scan, we want backpressure
+                        let permit = semaphore.acquire_owned().await.unwrap();
+
                         tokio::spawn(async move {
+                            pb.set_message(format!(
+                                "Indexing {:?}",
+                                path.file_name().unwrap_or_default()
+                            ));
                             index_file(path, config, db, embedder).await;
+                            drop(permit);
+                            pb.inc(1);
                         });
                     }
                 }
@@ -44,7 +65,7 @@ pub async fn run(config: Config) -> Result<()> {
             }
         }
     }
-    println!("Initial scan complete.");
+    pb.finish_with_message("Initial scan complete.");
 
     // 4. Start Watcher
     let (tx, rx) = mpsc::channel();
@@ -95,7 +116,12 @@ pub async fn run(config: Config) -> Result<()> {
                         let db = db.clone();
                         let embedder = embedder.clone();
                         let path = path.to_path_buf();
+                        let semaphore = semaphore.clone();
+
                         tokio::spawn(async move {
+                            // Acquire permit inside spawn for watcher events to avoid blocking the loop
+                            // (Though blocking loop is also fine for backpressure, but let's be non-blocking for events)
+                            let _permit = semaphore.acquire_owned().await.unwrap();
                             index_file(path, config, db, embedder).await;
                         });
                     }
@@ -116,6 +142,21 @@ async fn index_file(
 ) {
     // Check extension
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+
+    // Check if needs reindexing
+    let metadata = std::fs::metadata(&path).ok();
+    let modified = metadata
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let path_str = path.to_string_lossy().to_string();
+    if let Ok(false) = db.needs_reindexing(&path_str, modified) {
+        // println!("Skipping {:?} (unchanged)", path);
+        return;
+    }
 
     let chunks_result = if let Some(cmd) = config.plugins.get(ext) {
         println!("Using plugin {:?} for {:?}", cmd, path);
@@ -150,18 +191,31 @@ async fn index_file(
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        let metadata_json = serde_json::json!({
+        let file_metadata = serde_json::json!({
             "size": size,
             "created": created,
             "modified": modified,
             "extension": ext
-        })
-        .to_string();
+        });
 
         if let Ok(file_id) = db.add_or_update_file(&path_str, modified) {
             let count = chunks.len();
             let _ = db.clear_chunks(file_id);
             for chunk in chunks {
+                // Merge chunk metadata if present
+                let mut final_metadata = file_metadata.clone();
+                if let Some(cm) = &chunk.metadata {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(cm) {
+                        if let Some(obj) = final_metadata.as_object_mut() {
+                            if let Some(parsed_obj) = parsed.as_object() {
+                                for (k, v) in parsed_obj {
+                                    obj.insert(k.clone(), v.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Embed chunk
                 let embedding = embedder.embed(&chunk.content).ok();
                 let _ = db.add_chunk(
@@ -170,7 +224,7 @@ async fn index_file(
                     chunk.end,
                     &chunk.content,
                     embedding.as_deref(),
-                    Some(&metadata_json),
+                    Some(&final_metadata.to_string()),
                 );
             }
             let _ = db.mark_indexed(file_id);

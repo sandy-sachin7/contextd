@@ -1,11 +1,15 @@
 use anyhow::Result;
+use lru::LruCache;
 use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct Database {
     conn: Arc<Mutex<Connection>>,
+    query_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<SearchResult>>>>,
 }
 
 impl Database {
@@ -18,6 +22,7 @@ impl Database {
 
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
+            query_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(100).unwrap()))),
         };
 
         db.init()?;
@@ -52,6 +57,13 @@ impl Database {
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)",
+            [],
+        )?;
+
+        // FTS5 Virtual Table
+        // We use the same rowid as the chunks table for easy joining
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(content, tokenize='porter')",
             [],
         )?;
 
@@ -102,8 +114,30 @@ impl Database {
         Ok(())
     }
 
+    pub fn needs_reindexing(&self, path: &str, current_modified: u64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let last_indexed: Option<Option<u64>> = conn
+            .query_row(
+                "SELECT last_indexed FROM files WHERE path = ?1",
+                params![path],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        match last_indexed {
+            Some(Some(ts)) => Ok(current_modified > ts),
+            Some(None) => Ok(true), // File exists but never indexed
+            None => Ok(true),       // File doesn't exist in DB
+        }
+    }
+
     pub fn clear_chunks(&self, file_id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        // Delete from FTS first (using subquery)
+        conn.execute(
+            "DELETE FROM chunks_fts WHERE rowid IN (SELECT id FROM chunks WHERE file_id = ?1)",
+            params![file_id],
+        )?;
         conn.execute("DELETE FROM chunks WHERE file_id = ?1", params![file_id])?;
         Ok(())
     }
@@ -135,6 +169,14 @@ impl Database {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![file_id, start, end, content, embedding_bytes, metadata],
         )?;
+
+        let chunk_id = conn.last_insert_rowid();
+
+        // Insert into FTS
+        conn.execute(
+            "INSERT INTO chunks_fts (rowid, content) VALUES (?1, ?2)",
+            params![chunk_id, content],
+        )?;
         Ok(())
     }
 
@@ -159,6 +201,127 @@ impl Database {
         })
     }
 
+    /// Hybrid search using RRF (Reciprocal Rank Fusion)
+    pub fn search_chunks_hybrid(
+        &self,
+        query_text: &str,
+        query_embedding: &[f32],
+        options: &SearchOptions,
+    ) -> Result<Vec<SearchResult>> {
+        let limit = options.limit.unwrap_or(10);
+        let k = 60.0; // RRF constant
+
+        // 1. Vector Search
+        let vector_options = SearchOptions {
+            limit: Some(50), // Fetch more for re-ranking
+            start_time: options.start_time,
+            end_time: options.end_time,
+            file_types: options.file_types.clone(),
+            paths: options.paths.clone(),
+            min_score: None,
+        };
+        let vector_results = self.search_chunks_enhanced(query_embedding, &vector_options)?;
+
+        // 2. FTS Search
+        let conn = self.conn.lock().unwrap();
+        let mut sql = "SELECT c.id, c.content, f.path, f.last_modified
+                       FROM chunks_fts fts
+                       JOIN chunks c ON fts.rowid = c.id
+                       JOIN files f ON c.file_id = f.id
+                       WHERE fts.content MATCH ?"
+            .to_string();
+
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        params.push(Box::new(query_text.to_string()));
+
+        if let Some(start) = options.start_time {
+            sql.push_str(" AND f.last_modified >= ?");
+            params.push(Box::new(start));
+        }
+        if let Some(end) = options.end_time {
+            sql.push_str(" AND f.last_modified <= ?");
+            params.push(Box::new(end));
+        }
+
+        sql.push_str(" ORDER BY fts.rank LIMIT 50");
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+        let fts_iter = stmt.query_map(params_refs.as_slice(), |row| {
+            let id: i64 = row.get(0)?;
+            let content: String = row.get(1)?;
+            let file_path: String = row.get(2)?;
+            let last_modified: u64 = row.get(3)?;
+            Ok((id, content, file_path, last_modified))
+        })?;
+
+        let mut fts_results = Vec::new();
+        for res in fts_iter {
+            let (id, content, file_path, last_modified) = res?;
+
+            // Extract file extension
+            let file_type = file_path.rsplit('.').next().unwrap_or("").to_lowercase();
+
+            // Apply file type filter
+            if let Some(types) = &options.file_types {
+                if !types.iter().any(|t| t.to_lowercase() == file_type) {
+                    continue;
+                }
+            }
+
+            // Apply path filter
+            if let Some(path_filters) = &options.paths {
+                if !path_filters.iter().any(|p| file_path.contains(p)) {
+                    continue;
+                }
+            }
+
+            fts_results.push(SearchResult {
+                id,
+                content,
+                score: 0.0, // Placeholder
+                file_path,
+                file_type,
+                last_modified,
+            });
+        }
+
+        // 3. RRF
+        let mut scores: HashMap<i64, f32> = HashMap::new();
+        let mut results_map: HashMap<i64, SearchResult> = HashMap::new();
+
+        for (rank, res) in vector_results.iter().enumerate() {
+            let score = 1.0 / (k + (rank as f32 + 1.0));
+            *scores.entry(res.id).or_insert(0.0) += score;
+            results_map.insert(res.id, res.clone());
+        }
+
+        for (rank, res) in fts_results.iter().enumerate() {
+            let score = 1.0 / (k + (rank as f32 + 1.0));
+            *scores.entry(res.id).or_insert(0.0) += score;
+            if !results_map.contains_key(&res.id) {
+                results_map.insert(res.id, res.clone());
+            }
+        }
+
+        let mut final_results: Vec<SearchResult> = results_map.into_values().collect();
+        for res in &mut final_results {
+            if let Some(s) = scores.get(&res.id) {
+                res.score = *s;
+            }
+        }
+
+        final_results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        final_results.truncate(limit);
+
+        Ok(final_results)
+    }
+
     /// Enhanced search with file type and path filtering
     pub fn search_chunks_enhanced(
         &self,
@@ -171,10 +334,46 @@ impl Database {
         let file_types = options.file_types.as_deref();
         let paths = options.paths.as_deref();
         let min_score = options.min_score;
+
+        // Check cache
+        // Key: query_embedding (as bytes) + options (simplified)
+        // For v0, just cache based on embedding if options are default-ish
+        let cache_key = {
+            let mut key = Vec::with_capacity(query_embedding.len() * 4);
+            for val in query_embedding {
+                key.extend_from_slice(&val.to_le_bytes());
+            }
+            // Append options hash/bytes if needed. For now, let's assume options invalidate cache if they change?
+            // Or just cache raw search results and filter in memory?
+            // Let's keep it simple: Cache only if no filters are applied (except limit)
+            if options.start_time.is_none()
+                && options.end_time.is_none()
+                && options.file_types.is_none()
+                && options.paths.is_none()
+            {
+                Some(key)
+            } else {
+                None
+            }
+        };
+
+        if let Some(key) = &cache_key {
+            let mut cache = self.query_cache.lock().unwrap();
+            if let Some(results) = cache.get(key) {
+                // Apply limit and min_score from cached results
+                let mut results = results.clone();
+                if let Some(min) = min_score {
+                    results.retain(|r| r.score >= min);
+                }
+                results.truncate(limit);
+                return Ok(results);
+            }
+        }
+
         let conn = self.conn.lock().unwrap();
 
         // Build query with optional filters
-        let mut sql = "SELECT c.content, c.embedding, f.path, f.last_modified
+        let mut sql = "SELECT c.id, c.content, c.embedding, f.path, f.last_modified
                        FROM chunks c
                        JOIN files f ON c.file_id = f.id
                        WHERE c.embedding IS NOT NULL"
@@ -195,17 +394,18 @@ impl Database {
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
         let chunk_iter = stmt.query_map(params_refs.as_slice(), |row| {
-            let content: String = row.get(0)?;
-            let embedding_blob: Vec<u8> = row.get(1)?;
-            let file_path: String = row.get(2)?;
-            let last_modified: u64 = row.get(3)?;
-            Ok((content, embedding_blob, file_path, last_modified))
+            let id: i64 = row.get(0)?;
+            let content: String = row.get(1)?;
+            let embedding_blob: Vec<u8> = row.get(2)?;
+            let file_path: String = row.get(3)?;
+            let last_modified: u64 = row.get(4)?;
+            Ok((id, content, embedding_blob, file_path, last_modified))
         })?;
 
         let mut scored_chunks = Vec::new();
 
         for chunk in chunk_iter {
-            let (content, embedding_blob, file_path, last_modified) = chunk?;
+            let (id, content, embedding_blob, file_path, last_modified) = chunk?;
 
             // Extract file extension
             let file_type = file_path.rsplit('.').next().unwrap_or("").to_lowercase();
@@ -249,6 +449,7 @@ impl Database {
             }
 
             scored_chunks.push(SearchResult {
+                id,
                 content,
                 score,
                 file_path,
@@ -257,12 +458,25 @@ impl Database {
             });
         }
 
-        // Sort by score descending
         scored_chunks.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+
+        // Update cache
+        if let Some(key) = cache_key {
+            let mut cache = self.query_cache.lock().unwrap();
+            // Cache the full results (up to a reasonable limit, e.g. 50) so we can slice later
+            let cache_limit = 50;
+            let cached_chunks = if scored_chunks.len() > cache_limit {
+                scored_chunks[..cache_limit].to_vec()
+            } else {
+                scored_chunks.clone()
+            };
+            cache.put(key, cached_chunks);
+        }
+
         scored_chunks.truncate(limit);
 
         Ok(scored_chunks)
@@ -288,7 +502,9 @@ pub struct SearchOptions {
 }
 
 /// Enhanced search result with metadata
+#[derive(Clone)]
 pub struct SearchResult {
+    pub id: i64,
     pub content: String,
     pub score: f32,
     pub file_path: String,
