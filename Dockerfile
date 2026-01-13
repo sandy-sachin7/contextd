@@ -33,9 +33,6 @@ COPY --from=builder /app/target/release/contextd /usr/local/bin/contextd
 # Create directory for models and data
 RUN mkdir -p /app/models /app/data
 
-# Copy default config
-COPY contextd.toml /app/contextd.toml
-
 # Environment variables
 ENV CONTEXTD_DB_PATH=/app/data/contextd.db
 ENV CONTEXTD_MODEL_PATH=/app/models
@@ -48,4 +45,4 @@ VOLUME ["/workspace", "/app/data", "/app/models"]
 
 # Default command
 ENTRYPOINT ["contextd"]
-CMD ["--config", "/app/contextd.toml", "daemon"]
+CMD ["daemon"]
