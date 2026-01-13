@@ -54,8 +54,19 @@ jobs:
     - name: Build
       run: cargo build --verbose
 
-    - name: Run tests
-      run: cargo test --verbose
+    - name: Run unit tests
+      run: cargo test --verbose --bin contextd
+
+    - name: Run integration tests
+      run: cargo test --test '*' --verbose
+
+    - name: Build release for MCP tests
+      run: cargo build --release
+
+    - name: Run MCP e2e tests
+      run: |
+        timeout 120 python3 scripts/test_mcp_local.py || true
 
     - name: Clippy
       run: cargo clippy -- -D warnings
+
