@@ -28,9 +28,6 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             name: contextd-macos-aarch64
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            name: contextd-windows-x86_64.exe
 
     steps:
       - uses: actions/checkout@v4
@@ -54,10 +51,6 @@ jobs:
         run: |
           mv target/${{ matrix.target }}/release/contextd ${{ matrix.name }}
 
-      - name: Rename binary (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          mv target/${{ matrix.target }}/release/contextd.exe ${{ matrix.name }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
