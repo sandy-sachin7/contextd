@@ -260,6 +260,37 @@ Benchmarks on a typical codebase (10K files, ~500K LOC):
 | Open Source | ✅ | Partial | ❌ | ❌ |
 | Self-hosted | ✅ | ✅ ($$$) | ❌ | ❌ |
 
+## Testing
+
+contextd v0.1.0 includes a comprehensive test suite ensuring rock-solid reliability:
+
+### Test Coverage
+
+- **26 Unit Tests**: Core functionality (chunking, plugins, database, config)
+- **8 Integration Tests**: Load testing, file watcher reliability
+- **25+ E2E Tests**: MCP protocol compliance, error handling, edge cases
+- **Memory Stress Testing**: 10K files, 1K queries with profiling
+
+### Running Tests
+
+```bash
+# Unit tests (fastest - 30s)
+cargo test --bin contextd
+
+# Integration tests
+cargo test --test load_test
+cargo test --test watcher_test
+
+# MCP end-to-end tests
+python3 scripts/test_mcp_local.py
+
+# Memory stress test (requires psutil)
+pip install psutil
+python3 scripts/memory_stress_test.py
+```
+
+See [`tests/README.md`](tests/README.md) for detailed testing documentation.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md)
