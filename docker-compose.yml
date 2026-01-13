@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  contextd:
+    build: .
+    image: ghcr.io/sandy-sachin7/contextd:latest
+    container_name: contextd
+    ports:
+      - "3030:3030"
+    volumes:
+      # Mount your workspace for indexing
+      - ./:/workspace:ro
+      # Persistent storage for database
+      - contextd-data:/app/data
+      # Models directory (download once, reuse)
+      - contextd-models:/app/models
+    environment:
+      - CONTEXTD_DB_PATH=/app/data/contextd.db
+      - CONTEXTD_MODEL_PATH=/app/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3030/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  contextd-data:
+  contextd-models:
