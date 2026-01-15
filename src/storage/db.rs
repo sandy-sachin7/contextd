@@ -219,6 +219,7 @@ impl Database {
             file_types: options.file_types.clone(),
             paths: options.paths.clone(),
             min_score: None,
+            recency_weight: options.recency_weight,
         };
         let vector_results = self.search_chunks_enhanced(query_embedding, &vector_options)?;
 
@@ -446,10 +447,25 @@ impl Database {
                 }
             }
 
+            // Apply recency boost
+            let recency_weight = options.recency_weight.unwrap_or(0.1);
+            let final_score = if recency_weight > 0.0 {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let age_hours = (now.saturating_sub(last_modified)) / 3600;
+                // Decay: files lose ~50% boost after 24 hours
+                let recency_boost = 1.0 / (1.0 + (age_hours as f32 / 24.0));
+                score * (1.0 - recency_weight) + recency_boost * recency_weight
+            } else {
+                score
+            };
+
             scored_chunks.push(SearchResult {
                 id,
                 content,
-                score,
+                score: final_score,
                 file_path,
                 file_type,
                 last_modified,
@@ -497,6 +513,9 @@ pub struct SearchOptions {
     pub file_types: Option<Vec<String>>,
     pub paths: Option<Vec<String>>,
     pub min_score: Option<f32>,
+    /// Weight for recency boost (0.0 to 1.0, default 0.1)
+    /// Higher values prioritize recently modified files
+    pub recency_weight: Option<f32>,
 }
 
 /// Enhanced search result with metadata
@@ -604,5 +623,45 @@ mod tests {
             .unwrap();
 
         assert_eq!(count_after, 0);
+    }
+
+    #[test]
+    fn test_recency_boost() {
+        let db = Database::new(":memory:").unwrap();
+
+        // Create two files: one recent, one old
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let one_week_ago = now - (7 * 24 * 3600);
+
+        let recent_id = db.add_or_update_file("/recent.rs", now).unwrap();
+        let old_id = db.add_or_update_file("/old.rs", one_week_ago).unwrap();
+
+        // Add chunks with identical embeddings
+        let embedding: Vec<f32> = vec![1.0; 384]; // Normalized unit vector
+        db.add_chunk(recent_id, 0, 10, "function test", Some(&embedding), None)
+            .unwrap();
+        db.add_chunk(old_id, 0, 10, "function test", Some(&embedding), None)
+            .unwrap();
+        db.mark_indexed(recent_id).unwrap();
+        db.mark_indexed(old_id).unwrap();
+
+        // Search with recency boost
+        let options = SearchOptions {
+            limit: Some(10),
+            recency_weight: Some(0.5), // Strong recency weight
+            ..Default::default()
+        };
+        let results = db.search_chunks_enhanced(&embedding, &options).unwrap();
+
+        // Recent file should rank higher
+        assert_eq!(results.len(), 2);
+        assert!(
+            results[0].file_path.contains("recent"),
+            "Recent file should rank first"
+        );
+        assert!(results[0].score > results[1].score);
     }
 }
