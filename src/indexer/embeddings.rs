@@ -19,8 +19,10 @@ impl Embedder {
 
         let hidden_size = match model_type.as_str() {
             "all-minilm-l6-v2" => 384,
+            "bge-small-en-v1.5" => 384,
+            "all-mpnet-base-v2" => 768,
             "codebert-base" | "unixcoder-base" => 768,
-            _ => 384,
+            _ => 384, // Default fallback
         };
 
         let tokenizer_path = model_dir.join("tokenizer.json");
