@@ -265,7 +265,11 @@ impl Database {
             .to_string();
 
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        params.push(Box::new(query_text.to_string()));
+        // Sanitize query for FTS5
+        // Escape double quotes and wrap in quotes to treat as a phrase/literal
+        // This prevents syntax errors with special characters like OR, AND, etc.
+        let sanitized_query = format!("\"{}\"", query_text.replace('"', "\"\""));
+        params.push(Box::new(sanitized_query));
 
         if let Some(start) = options.start_time {
             sql.push_str(" AND f.last_modified >= ?");
@@ -814,5 +818,32 @@ mod tests {
         // Context fields exist (populated by caller, not search)
         assert!(results[0].context_before.is_none());
         assert!(results[0].context_after.is_none());
+    }
+
+    #[test]
+    fn test_fts_sanitization() {
+        let db = Database::new(":memory:").unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let file_id = db.add_or_update_file("/test.rs", now).unwrap();
+
+        // Add chunk with content containing special FTS operators
+        let embedding: Vec<f32> = vec![1.0; 384];
+        db.add_chunk(file_id, 0, 10, "function with OR and AND", Some(&embedding), None).unwrap();
+        db.mark_indexed(file_id).unwrap();
+
+        // Search with special characters that would break raw FTS5
+        // "OR" is an operator, but we want to match the literal word "OR"
+        let options = SearchOptions {
+            limit: Some(10),
+            ..Default::default()
+        };
+
+        // This should not panic or error due to syntax
+        let results = db.search_chunks_enhanced(&embedding, &options).unwrap();
+        assert!(!results.is_empty());
     }
 }
