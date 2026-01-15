@@ -1,6 +1,7 @@
 # contextd
 
 [![CI](https://github.com/sandy-sachin7/contextd/actions/workflows/ci.yml/badge.svg)](https://github.com/sandy-sachin7/contextd/actions)
+[![Release](https://img.shields.io/github/v/release/sandy-sachin7/contextd)](https://github.com/sandy-sachin7/contextd/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-blue)](https://modelcontextprotocol.io)
 
@@ -97,6 +98,12 @@ Tree-sitter based parsing for:
 - **Query Caching**: Repeated queries use cached embeddings
 - **Adaptive Debouncing**: Batches file changes to avoid CPU spikes
 - **Incremental Updates**: Only re-indexes changed files
+
+### 🎯 Search Intelligence (v1.0.0+)
+
+- **Recency Boost**: Recently modified files rank higher (configurable `recency_weight`)
+- **Frequency Ranking**: Frequently queried files get priority (configurable `frequency_weight`)
+- **Smart Blending**: Combines semantic, keyword, recency, and frequency signals
 
 ### 🔌 Plugin System
 
@@ -279,11 +286,11 @@ Benchmarks on a typical codebase (10K files, ~500K LOC):
 
 ## Testing
 
-contextd v0.1.0 includes a comprehensive test suite ensuring rock-solid reliability:
+contextd includes a comprehensive test suite ensuring rock-solid reliability:
 
 ### Test Coverage
 
-- **26 Unit Tests**: Core functionality (chunking, plugins, database, config)
+- **28 Unit Tests**: Core functionality (chunking, plugins, database, ranking)
 - **8 Integration Tests**: Load testing, file watcher reliability
 - **25+ E2E Tests**: MCP protocol compliance, error handling, edge cases
 - **Memory Stress Testing**: 10K files, 1K queries with profiling
@@ -314,12 +321,15 @@ See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Roadmap
 
-- [ ] Pre-built binaries (Linux/Mac/Windows)
+- [x] Pre-built binaries (Linux/Mac) ✅ v0.2.0
+- [x] Homebrew formula ✅ v0.2.0
+- [x] Docker image ✅ v0.2.0
+- [x] Recency boost ✅ v1.0.0
+- [x] Frequency ranking ✅ v1.1.0
 - [ ] VSCode extension
 - [ ] Additional embedding models (CodeBERT, UniXcoder)
 - [ ] Re-ranking layer (cross-encoder)
-- [ ] Homebrew formula
-- [ ] Docker image
+- [ ] Smart Context Windows
 
 ## License
 
