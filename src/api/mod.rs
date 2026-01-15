@@ -159,6 +159,7 @@ async fn handle_query(
         min_score: payload.min_score,
         recency_weight: None,   // Use default
         frequency_weight: None, // Use default
+        context_lines: None,    // Use default
     };
 
     let results = match db.search_chunks_enhanced(&embedding, &options) {

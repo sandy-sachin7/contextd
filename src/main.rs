@@ -51,8 +51,8 @@ async fn main() -> anyhow::Result<()> {
         cli::Commands::Setup => {
             cli::handle_setup(&config).await?;
         }
-        cli::Commands::Query { query } => {
-            cli::handle_query(&config, &query).await?;
+        cli::Commands::Query { query, context } => {
+            cli::handle_query(&config, &query, context).await?;
         }
     }
 

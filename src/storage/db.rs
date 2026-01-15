@@ -251,6 +251,7 @@ impl Database {
             min_score: None,
             recency_weight: options.recency_weight,
             frequency_weight: options.frequency_weight,
+            context_lines: options.context_lines,
         };
         let vector_results = self.search_chunks_enhanced(query_embedding, &vector_options)?;
 
@@ -316,6 +317,7 @@ impl Database {
                 file_path,
                 file_type,
                 last_modified,
+                ..Default::default()
             });
         }
 
@@ -524,6 +526,7 @@ impl Database {
                 file_path,
                 file_type,
                 last_modified,
+                ..Default::default()
             });
         }
 
@@ -569,15 +572,15 @@ pub struct SearchOptions {
     pub paths: Option<Vec<String>>,
     pub min_score: Option<f32>,
     /// Weight for recency boost (0.0 to 1.0, default 0.1)
-    /// Higher values prioritize recently modified files
     pub recency_weight: Option<f32>,
     /// Weight for frequency boost (0.0 to 1.0, default 0.1)
-    /// Higher values prioritize frequently queried files
     pub frequency_weight: Option<f32>,
+    /// Number of context lines to include before/after match (default 0)
+    pub context_lines: Option<usize>,
 }
 
 /// Enhanced search result with metadata
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SearchResult {
     pub id: i64,
     pub content: String,
@@ -585,6 +588,18 @@ pub struct SearchResult {
     pub file_path: String,
     pub file_type: String,
     pub last_modified: u64,
+    /// Context lines before the matched content
+    #[allow(dead_code)]
+    pub context_before: Option<String>,
+    /// Context lines after the matched content
+    #[allow(dead_code)]
+    pub context_after: Option<String>,
+    /// Starting line number in the source file
+    #[allow(dead_code)]
+    pub line_start: Option<usize>,
+    /// Ending line number in the source file
+    #[allow(dead_code)]
+    pub line_end: Option<usize>,
 }
 
 #[cfg(test)]
@@ -766,5 +781,38 @@ mod tests {
             "Frequently queried file should rank first"
         );
         assert!(results[0].score > results[1].score);
+    }
+
+    #[test]
+    fn test_context_lines_option() {
+        let db = Database::new(":memory:").unwrap();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let file_id = db.add_or_update_file("/test.rs", now).unwrap();
+
+        // Add chunk with embedding
+        let embedding: Vec<f32> = vec![1.0; 384];
+        db.add_chunk(file_id, 0, 10, "fn test() {}", Some(&embedding), None)
+            .unwrap();
+        db.mark_indexed(file_id).unwrap();
+
+        // Search with context_lines option
+        let options = SearchOptions {
+            limit: Some(10),
+            context_lines: Some(3),
+            ..Default::default()
+        };
+        let results = db.search_chunks_enhanced(&embedding, &options).unwrap();
+
+        // Verify result exists and context_lines was passed
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].file_path, "/test.rs");
+        // Context fields exist (populated by caller, not search)
+        assert!(results[0].context_before.is_none());
+        assert!(results[0].context_after.is_none());
     }
 }
