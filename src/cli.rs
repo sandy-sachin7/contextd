@@ -19,7 +19,12 @@ pub enum Commands {
     /// Setup models
     Setup,
     /// Query the index
-    Query { query: String },
+    Query {
+        query: String,
+        /// Number of context lines to show before/after match
+        #[arg(short, long, default_value = "0")]
+        context: usize,
+    },
 }
 
 pub async fn handle_setup(config: &Config) -> Result<()> {
@@ -88,7 +93,7 @@ async fn download_file(url: &str, path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-pub async fn handle_query(config: &Config, query: &str) -> Result<()> {
+pub async fn handle_query(config: &Config, query: &str, context_lines: usize) -> Result<()> {
     let db = Database::new(&config.storage.db_path)?;
     let embedder = Embedder::new(&config.storage)?;
 
@@ -96,6 +101,11 @@ pub async fn handle_query(config: &Config, query: &str) -> Result<()> {
 
     let options = SearchOptions {
         limit: Some(10),
+        context_lines: if context_lines > 0 {
+            Some(context_lines)
+        } else {
+            None
+        },
         ..Default::default()
     };
 
