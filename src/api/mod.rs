@@ -157,7 +157,8 @@ async fn handle_query(
         file_types: payload.file_types,
         paths: payload.paths,
         min_score: payload.min_score,
-        recency_weight: None, // Use default
+        recency_weight: None,   // Use default
+        frequency_weight: None, // Use default
     };
 
     let results = match db.search_chunks_enhanced(&embedding, &options) {
