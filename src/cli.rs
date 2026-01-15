@@ -39,23 +39,32 @@ pub async fn handle_setup(config: &Config) -> Result<()> {
     println!("Target directory: {:?}", model_dir);
 
     // Define URLs based on model type
-    // Using HuggingFace URLs
-    let (model_url, tokenizer_url) = match model_type.as_str() {
+    // Using HuggingFace Optimum ONNX models
+    let (model_url, tokenizer_url, description) = match model_type.as_str() {
         "all-minilm-l6-v2" => (
             "https://huggingface.co/optimum/all-MiniLM-L6-v2/resolve/main/model.onnx",
             "https://huggingface.co/optimum/all-MiniLM-L6-v2/resolve/main/tokenizer.json",
+            "General-purpose embeddings (384 dim, fast)",
         ),
-        "codebert-base" => (
-             // Placeholder - need ONNX version
-            "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/model.onnx",
-            "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json",
+        "all-mpnet-base-v2" => (
+            "https://huggingface.co/optimum/all-mpnet-base-v2/resolve/main/model.onnx",
+            "https://huggingface.co/optimum/all-mpnet-base-v2/resolve/main/tokenizer.json",
+            "Higher quality embeddings (768 dim, recommended for code)",
+        ),
+        "bge-small-en-v1.5" => (
+            "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.onnx",
+            "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/tokenizer.json",
+            "BGE small embeddings (384 dim, good quality/speed balance)",
         ),
         _ => (
-             // Default fallback
+            // Default fallback
             "https://huggingface.co/optimum/all-MiniLM-L6-v2/resolve/main/model.onnx",
             "https://huggingface.co/optimum/all-MiniLM-L6-v2/resolve/main/tokenizer.json",
+            "Default: all-minilm-l6-v2 (384 dim)",
         ),
     };
+
+    println!("Model: {} - {}", model_type, description);
 
     download_file(model_url, &model_dir.join("model.onnx")).await?;
     download_file(tokenizer_url, &model_dir.join("tokenizer.json")).await?;
