@@ -164,7 +164,6 @@ contextd mcp
 
 ## Configuration
 
-Create `contextd.toml`:
 ```toml
 [server]
 host = "127.0.0.1"
@@ -173,7 +172,20 @@ port = 3030
 [storage]
 db_path = "contextd.db"
 model_path = "models"
-model_type = "all-minilm-l6-v2"  # Configurable!
+model_type = "all-minilm-l6-v2"  # See available models below
+```
+
+### Available Embedding Models
+
+| Model | Dimensions | Best For |
+|-------|------------|----------|
+| `all-minilm-l6-v2` (default) | 384 | General purpose, fast |
+| `all-mpnet-base-v2` | 768 | Higher quality, recommended for code |
+| `bge-small-en-v1.5` | 384 | Good quality/speed balance |
+
+To switch models, change `model_type` in config and run:
+```bash
+contextd setup
 
 [search]
 enable_cache = true
@@ -257,10 +269,9 @@ contextd works with any tool that supports the [Model Context Protocol](https://
 - **Claude Desktop**: [Setup Guide](docs/mcp-integration.md#claude-desktop)
 - **Cline / Roo Code**: [Setup Guide](docs/mcp-integration.md#cline--roo-code)
 - **Continue**: [Setup Guide](docs/mcp-integration.md#continue)
-- **Zed Editor**: (Coming soon)
 
 ### VSCode Extension
-Coming soon! Track progress in [#issue-number]
+In development !
 
 ### Obsidian Plugin
 Community contribution welcome!
