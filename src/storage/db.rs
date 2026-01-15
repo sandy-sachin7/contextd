@@ -832,7 +832,15 @@ mod tests {
 
         // Add chunk with content containing special FTS operators
         let embedding: Vec<f32> = vec![1.0; 384];
-        db.add_chunk(file_id, 0, 10, "function with OR and AND", Some(&embedding), None).unwrap();
+        db.add_chunk(
+            file_id,
+            0,
+            10,
+            "function with OR and AND",
+            Some(&embedding),
+            None,
+        )
+        .unwrap();
         db.mark_indexed(file_id).unwrap();
 
         // Search with special characters that would break raw FTS5
