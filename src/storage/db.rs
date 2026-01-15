@@ -67,6 +67,16 @@ impl Database {
             [],
         )?;
 
+        // Query hits table for frequency ranking
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS query_hits (
+                file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                hit_count INTEGER DEFAULT 0,
+                last_hit INTEGER
+            )",
+            [],
+        )?;
+
         Ok(())
     }
 
@@ -201,6 +211,26 @@ impl Database {
         })
     }
 
+    /// Record a search hit for a file (for frequency ranking)
+    /// Call this after returning search results to boost frequently accessed files
+    #[allow(dead_code)]
+    pub fn record_search_hit(&self, file_id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        conn.execute(
+            "INSERT INTO query_hits (file_id, hit_count, last_hit)
+             VALUES (?1, 1, ?2)
+             ON CONFLICT(file_id) DO UPDATE SET
+                hit_count = hit_count + 1,
+                last_hit = ?2",
+            params![file_id, now],
+        )?;
+        Ok(())
+    }
+
     /// Hybrid search using RRF (Reciprocal Rank Fusion)
     pub fn search_chunks_hybrid(
         &self,
@@ -220,6 +250,7 @@ impl Database {
             paths: options.paths.clone(),
             min_score: None,
             recency_weight: options.recency_weight,
+            frequency_weight: options.frequency_weight,
         };
         let vector_results = self.search_chunks_enhanced(query_embedding, &vector_options)?;
 
@@ -371,12 +402,15 @@ impl Database {
 
         let conn = self.conn.lock().unwrap();
 
-        // Build query with optional filters
-        let mut sql = "SELECT c.id, c.content, c.embedding, f.path, f.last_modified
+        // Build query with optional filters - include file_id for frequency tracking
+        let mut sql =
+            "SELECT c.id, c.content, c.embedding, f.path, f.last_modified, f.id as file_id,
+                              COALESCE(qh.hit_count, 0) as hit_count
                        FROM chunks c
                        JOIN files f ON c.file_id = f.id
+                       LEFT JOIN query_hits qh ON f.id = qh.file_id
                        WHERE c.embedding IS NOT NULL"
-            .to_string();
+                .to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(start) = start_time {
@@ -398,13 +432,24 @@ impl Database {
             let embedding_blob: Vec<u8> = row.get(2)?;
             let file_path: String = row.get(3)?;
             let last_modified: u64 = row.get(4)?;
-            Ok((id, content, embedding_blob, file_path, last_modified))
+            let file_id: i64 = row.get(5)?;
+            let hit_count: i64 = row.get(6)?;
+            Ok((
+                id,
+                content,
+                embedding_blob,
+                file_path,
+                last_modified,
+                file_id,
+                hit_count,
+            ))
         })?;
 
         let mut scored_chunks = Vec::new();
 
         for chunk in chunk_iter {
-            let (id, content, embedding_blob, file_path, last_modified) = chunk?;
+            let (id, content, embedding_blob, file_path, last_modified, _file_id, hit_count) =
+                chunk?;
 
             // Extract file extension
             let file_type = file_path.rsplit('.').next().unwrap_or("").to_lowercase();
@@ -449,7 +494,7 @@ impl Database {
 
             // Apply recency boost
             let recency_weight = options.recency_weight.unwrap_or(0.1);
-            let final_score = if recency_weight > 0.0 {
+            let recency_adjusted = if recency_weight > 0.0 {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -460,6 +505,16 @@ impl Database {
                 score * (1.0 - recency_weight) + recency_boost * recency_weight
             } else {
                 score
+            };
+
+            // Apply frequency boost (additive, logarithmic scaling)
+            let frequency_weight = options.frequency_weight.unwrap_or(0.1);
+            let final_score = if frequency_weight > 0.0 && hit_count > 0 {
+                // Additive boost: base_score + weight * ln(1 + hit_count)
+                let freq_boost = (hit_count as f32).ln_1p() * frequency_weight;
+                recency_adjusted + freq_boost
+            } else {
+                recency_adjusted
             };
 
             scored_chunks.push(SearchResult {
@@ -516,6 +571,9 @@ pub struct SearchOptions {
     /// Weight for recency boost (0.0 to 1.0, default 0.1)
     /// Higher values prioritize recently modified files
     pub recency_weight: Option<f32>,
+    /// Weight for frequency boost (0.0 to 1.0, default 0.1)
+    /// Higher values prioritize frequently queried files
+    pub frequency_weight: Option<f32>,
 }
 
 /// Enhanced search result with metadata
@@ -661,6 +719,51 @@ mod tests {
         assert!(
             results[0].file_path.contains("recent"),
             "Recent file should rank first"
+        );
+        assert!(results[0].score > results[1].score);
+    }
+
+    #[test]
+    fn test_frequency_boost() {
+        let db = Database::new(":memory:").unwrap();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Create two files with same modification time
+        let frequent_id = db.add_or_update_file("/frequent.rs", now).unwrap();
+        let rare_id = db.add_or_update_file("/rare.rs", now).unwrap();
+
+        // Add chunks with identical embeddings
+        let embedding: Vec<f32> = vec![1.0; 384];
+        db.add_chunk(frequent_id, 0, 10, "function test", Some(&embedding), None)
+            .unwrap();
+        db.add_chunk(rare_id, 0, 10, "function test", Some(&embedding), None)
+            .unwrap();
+        db.mark_indexed(frequent_id).unwrap();
+        db.mark_indexed(rare_id).unwrap();
+
+        // Simulate frequent access
+        for _ in 0..10 {
+            db.record_search_hit(frequent_id).unwrap();
+        }
+
+        // Search with frequency boost
+        let options = SearchOptions {
+            limit: Some(10),
+            frequency_weight: Some(0.5), // Strong frequency weight
+            recency_weight: Some(0.0),   // Disable recency boost
+            ..Default::default()
+        };
+        let results = db.search_chunks_enhanced(&embedding, &options).unwrap();
+
+        // Frequent file should rank higher
+        assert_eq!(results.len(), 2);
+        assert!(
+            results[0].file_path.contains("frequent"),
+            "Frequently queried file should rank first"
         );
         assert!(results[0].score > results[1].score);
     }
