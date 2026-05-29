@@ -11,6 +11,16 @@ use indicatif::{ProgressBar, ProgressStyle};
 use tokio::sync::Semaphore;
 
 pub async fn run(config: Config) -> Result<()> {
+    // 0. Monitor stdin for EOF to handle graceful exit if parent dies (e.g., VS Code extension)
+    tokio::spawn(async {
+        let mut buf = [0; 1];
+        use tokio::io::AsyncReadExt;
+        if let Ok(0) = tokio::io::stdin().read(&mut buf).await {
+            eprintln!("Stdin closed (parent died). Shutting down daemon.");
+            std::process::exit(0);
+        }
+    });
+
     // 1. Initialize Storage
     let db = Database::new(&config.storage.db_path)?;
     println!("Database initialized at {:?}", config.storage.db_path);
@@ -106,7 +116,21 @@ pub async fn run(config: Config) -> Result<()> {
                     unique_paths.insert(event.path);
                 }
 
+                let db_path_str = config.storage.db_path.to_string_lossy().to_string();
+
                 for path in unique_paths {
+                    let path_str = path.to_string_lossy().to_string();
+                    
+                    // Explicitly ignore database files to prevent infinite watcher loops
+                    if path_str == db_path_str || path_str == format!("{}-wal", db_path_str) || path_str == format!("{}-shm", db_path_str) {
+                        continue;
+                    }
+                    
+                    // Enforce hard skips for heavy system directories
+                    if path_str.contains("/.git/") || path_str.contains("\\.git\\") || path_str.contains("/node_modules/") || path_str.contains("\\node_modules\\") {
+                        continue;
+                    }
+
                     let is_dir = path.is_dir();
                     let is_ignored = ignore_checkers.iter().any(|c| c.is_ignored(&path, is_dir));
 

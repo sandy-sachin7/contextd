@@ -18,6 +18,7 @@ impl Tool {
             "continue" => self.merge_array(existing, binary),
             "opencode" => self.merge_opencode(existing, binary),
             "vscode-copilot" => self.merge_key(existing, "servers", binary),
+            "codex" => self.merge_key(existing, "mcp_servers", binary),
             _ => self.merge_key(existing, "mcpServers", binary),
         }
     }
@@ -193,6 +194,16 @@ const TOOLS: &[Tool] = &[
         config_paths: || vec![PathBuf::from(&home_dir()).join(".antigravity/plugins/mcp.json")],
         generate_config: |binary| json!({ "mcpServers": { "contextd": { "command": binary, "args": ["mcp"] } } }),
     },
+    Tool {
+        id: "codex",
+        name: "Codex",
+        detect: || binary_in_path("codex") || PathBuf::from(&home_dir()).join(".codex/config.toml").exists(),
+        config_paths: || vec![
+            PathBuf::from(".").join(".codex/config.toml"),
+            PathBuf::from(&home_dir()).join(".codex/config.toml"),
+        ],
+        generate_config: |binary| json!({ "mcp_servers": { "contextd": { "command": binary, "args": ["mcp"] } } }),
+    },
 ];
 
 fn home_dir() -> String {
@@ -255,16 +266,30 @@ pub async fn handle_connect(all: bool) -> Result<()> {
                     .with_context(|| format!("Failed to create directory {:?}", parent))?;
             }
 
+            let is_toml = cfg_path.extension().and_then(|e| e.to_str()) == Some("toml");
+
             let existing: Value = match fs::read_to_string(cfg_path) {
                 Ok(content) => {
-                    serde_json::from_str(&content).unwrap_or(Value::Object(Default::default()))
+                    if is_toml {
+                        toml::from_str(&content).unwrap_or_else(|_| Value::Object(Default::default()))
+                    } else {
+                        serde_json::from_str(&content).unwrap_or_else(|_| Value::Object(Default::default()))
+                    }
                 }
                 Err(_) => Value::Object(Default::default()),
             };
 
             let merged = tool.merge(&existing, &binary);
-            let pretty = serde_json::to_string_pretty(&merged)?;
-            fs::write(cfg_path, &pretty)
+            
+            let serialized = if is_toml {
+                toml::to_string_pretty(&merged)
+                    .with_context(|| format!("Failed to serialize TOML for {:?}", cfg_path))?
+            } else {
+                serde_json::to_string_pretty(&merged)
+                    .with_context(|| format!("Failed to serialize JSON for {:?}", cfg_path))?
+            };
+            
+            fs::write(cfg_path, &serialized)
                 .with_context(|| format!("Failed to write config to {:?}", cfg_path))?;
             configured += 1;
             println!("  ✓ {} configured at {:?}", tool.name, cfg_path);
@@ -286,7 +311,7 @@ mod tests {
     #[test]
     fn test_tool_trait_exists() {
         assert!(!TOOLS.is_empty());
-        assert_eq!(TOOLS.len(), 8);
+        assert_eq!(TOOLS.len(), 9);
     }
 
     #[test]

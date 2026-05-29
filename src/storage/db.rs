@@ -19,6 +19,7 @@ impl Database {
         // Enable foreign keys and WAL mode
         conn.execute("PRAGMA foreign_keys = ON;", [])?;
         let _mode: String = conn.query_row("PRAGMA journal_mode = WAL;", [], |row| row.get(0))?;
+        conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
 
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),

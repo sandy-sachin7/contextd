@@ -38,6 +38,12 @@ pub async fn download_file(url: &str, path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+pub fn model_files_exist(model_dir: &PathBuf) -> bool {
+    let model_path = model_dir.join("model.onnx");
+    let tokenizer_path = model_dir.join("tokenizer.json");
+    model_path.exists() && tokenizer_path.exists()
+}
+
 pub async fn ensure_model_files(model_dir: &PathBuf, model_type: &str) -> Result<bool> {
     if !model_dir.exists() {
         fs::create_dir_all(model_dir)?;
