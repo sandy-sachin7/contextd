@@ -1,6 +1,7 @@
 pub mod api;
 pub mod cli;
 pub mod config;
+pub mod connect;
 pub mod daemon;
 pub mod download;
 pub mod indexer;

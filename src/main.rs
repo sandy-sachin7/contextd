@@ -54,6 +54,9 @@ async fn main() -> anyhow::Result<()> {
         cli::Commands::Query { query, context } => {
             cli::handle_query(&config, &query, context).await?;
         }
+        cli::Commands::Connect { all } => {
+            contextd::connect::handle_connect(all).await?;
+        }
     }
 
     Ok(())

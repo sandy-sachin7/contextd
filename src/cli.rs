@@ -20,6 +20,12 @@ pub enum Commands {
         #[arg(short, long, default_value = "0")]
         context: usize,
     },
+    /// Configure MCP for compatible AI tools
+    Connect {
+        /// Configure all detected tools without prompting
+        #[arg(long, default_value_t = false)]
+        all: bool,
+    },
 }
 
 pub async fn handle_setup(config: &Config) -> Result<()> {
