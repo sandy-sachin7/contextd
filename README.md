@@ -1,12 +1,18 @@
-# contextd
+<div align="center">
+  <img src="https://raw.githubusercontent.com/sandy-sachin7/contextd/main/assets/logo.png" alt="contextd logo" width="120" />
 
-[![CI](https://github.com/sandy-sachin7/contextd/actions/workflows/ci.yml/badge.svg)](https://github.com/sandy-sachin7/contextd/actions)
-[![Release](https://img.shields.io/github/v/release/sandy-sachin7/contextd)](https://github.com/sandy-sachin7/contextd/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-blue)](https://modelcontextprotocol.io)
-[![Playground](https://img.shields.io/badge/try-playground-brightgreen)](scripts/playground.sh)
+  <h1>contextd</h1>
+  <p><b>Local-first semantic search meets AI context.</b></p>
+  <p><i>A privacy-preserving daemon that transforms your codebase into queryable intelligence for AI assistants.</i></p>
 
-> **Local-first semantic search meets AI context** - A privacy-preserving daemon that transforms your codebase into queryable intelligence for AI assistants.
+  [![CI](https://github.com/sandy-sachin7/contextd/actions/workflows/ci.yml/badge.svg)](https://github.com/sandy-sachin7/contextd/actions)
+  [![Release](https://img.shields.io/github/v/release/sandy-sachin7/contextd)](https://github.com/sandy-sachin7/contextd/releases)
+  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+  [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-blue)](https://modelcontextprotocol.io)
+  [![VSCode Marketplace](https://img.shields.io/badge/VSCode-Marketplace-blue)](https://marketplace.visualstudio.com/items?itemName=SanthoshSachin.contextd-semantic-search)
+</div>
+
+<hr/>
 
 ## Why contextd?
 
