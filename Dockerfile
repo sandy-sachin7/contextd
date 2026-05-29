@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
 # Copy source
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY benches ./benches
 
 # Build release binary
 RUN cargo build --release

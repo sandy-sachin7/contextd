@@ -46,13 +46,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
-      - name: Build
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          ORT_STRATEGY: download
+          CFLAGS: /MD
+          CXXFLAGS: /MD
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
         run: cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           ORT_STRATEGY: download
-          CFLAGS: /MD
-          CXXFLAGS: /MD
 
       - name: Rename binary (Unix)
         if: runner.os != 'Windows'
