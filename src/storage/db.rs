@@ -1,10 +1,8 @@
 use anyhow::Result;
-use lru::LruCache;
 use rusqlite::ffi::sqlite3_auto_extension;
 use rusqlite::{params, Connection, OptionalExtension};
 use sqlite_vec::sqlite3_vec_init;
 use std::collections::HashMap;
-use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Once;
 use std::sync::{Arc, Mutex};
@@ -13,10 +11,10 @@ static INIT_SQLITE_VEC: Once = Once::new();
 #[derive(Clone)]
 pub struct Database {
     conn: Arc<Mutex<Connection>>,
-    query_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<SearchResult>>>>,
 }
 
 impl Database {
+    #[allow(clippy::missing_transmute_annotations)]
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         INIT_SQLITE_VEC.call_once(|| unsafe {
             sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
@@ -30,7 +28,6 @@ impl Database {
 
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
-            query_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(100).unwrap()))),
         };
 
         db.init()?;
@@ -419,18 +416,19 @@ impl Database {
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         params.push(Box::new(query_bytes));
 
+
         let mut param_idx = 2;
 
         if let Some(start) = start_time {
             sql.push_str(&format!(" AND f.last_modified >= ?{}", param_idx));
-            params.push(Box::new(start));
             param_idx += 1;
+            params.push(Box::new(start));
         }
 
         if let Some(end) = end_time {
             sql.push_str(&format!(" AND f.last_modified <= ?{}", param_idx));
+            let _ = param_idx;
             params.push(Box::new(end));
-            param_idx += 1;
         }
 
         let mut stmt = conn.prepare(&sql)?;
@@ -478,7 +476,7 @@ impl Database {
             // Let's assume score = 1.0 - distance to match previous cosine similarity logic.
             // Wait, vec_distance_cosine in sqlite-vec returns the cosine distance (0.0 means identical, up to 2.0).
             // We want similarity, which is 1.0 - distance.
-            let mut score = 1.0 - distance;
+            let score = 1.0 - distance;
 
             // Re-apply original similarity range?
             // In original it was: a*b sum, which is dot product. If vectors are normalized, dot product = cosine similarity.
