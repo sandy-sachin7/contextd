@@ -15,14 +15,21 @@ pub async fn run(config: Config) -> Result<()> {
     let db = Database::new(&config.storage.db_path)?;
     println!("Database initialized at {:?}", config.storage.db_path);
 
-    // 2. Initialize Embedder
+    // 2. Ensure model files exist (auto-download if missing)
+    if crate::download::ensure_model_files(&config.storage.model_path, &config.storage.model_type)
+        .await?
+    {
+        println!("Model files were downloaded.");
+    }
+
+    // 3. Initialize Embedder
     let embedder = Arc::new(Embedder::new(&config.storage)?);
     println!("Embedder initialized from {:?}", config.storage.model_path);
 
     let config = Arc::new(config);
     let semaphore = Arc::new(Semaphore::new(4)); // Limit concurrency
 
-    // 3. Initial Scan
+    // 4. Initial Scan
     println!("Performing initial scan of {:?}", config.watch.paths);
     let pb = ProgressBar::new_spinner();
     pb.set_style(ProgressStyle::default_spinner().template("{spinner:.green} {msg}")?);
@@ -67,12 +74,12 @@ pub async fn run(config: Config) -> Result<()> {
     }
     pb.finish_with_message("Initial scan complete.");
 
-    // 4. Start Watcher
+    // 5. Start Watcher
     let (tx, rx) = mpsc::channel();
     let _watcher = watcher::watch(&config.watch.paths, tx)?;
     println!("Watching {:?}", config.watch.paths);
 
-    // 5. Start API Server in background
+    // 6. Start API Server in background
     let db_clone = db.clone();
     let embedder_clone = embedder.clone();
     let host = config.server.host.clone();
@@ -89,7 +96,7 @@ pub async fn run(config: Config) -> Result<()> {
         .map(|p| crate::indexer::ignore::IgnoreChecker::new(p))
         .collect();
 
-    // 6. Main Loop: Process File Events
+    // 7. Main Loop: Process File Events
     println!("Daemon main loop starting...");
     for result in rx {
         match result {

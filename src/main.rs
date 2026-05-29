@@ -39,6 +39,11 @@ async fn main() -> anyhow::Result<()> {
         }
         cli::Commands::Mcp => {
             eprintln!("contextd starting in MCP mode...");
+            contextd::download::ensure_model_files(
+                &config.storage.model_path,
+                &config.storage.model_type,
+            )
+            .await?;
             let db = Database::new(&config.storage.db_path)?;
             let embedder = Arc::new(Embedder::new(&config.storage)?);
             mcp::run_mcp_server(db, embedder, config).await;

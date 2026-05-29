@@ -1,10 +1,5 @@
 use anyhow::Result;
 use clap::Subcommand;
-use futures_util::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
-use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
 
 use crate::config::Config;
 use crate::indexer::embeddings::Embedder;
@@ -28,77 +23,13 @@ pub enum Commands {
 }
 
 pub async fn handle_setup(config: &Config) -> Result<()> {
-    let model_dir = &config.storage.model_path;
-    let model_type = &config.storage.model_type;
+    println!("Setting up model: {}", config.storage.model_type);
+    println!("Target directory: {:?}", config.storage.model_path);
 
-    if !model_dir.exists() {
-        fs::create_dir_all(model_dir)?;
-    }
-
-    println!("Setting up model: {}", model_type);
-    println!("Target directory: {:?}", model_dir);
-
-    // Define URLs based on model type
-    // Using HuggingFace Optimum ONNX models
-    let (model_url, tokenizer_url, description) = match model_type.as_str() {
-        "all-minilm-l6-v2" => (
-            "https://huggingface.co/optimum/all-MiniLM-L6-v2/resolve/main/model.onnx",
-            "https://huggingface.co/optimum/all-MiniLM-L6-v2/resolve/main/tokenizer.json",
-            "General-purpose embeddings (384 dim, fast)",
-        ),
-        "all-mpnet-base-v2" => (
-            "https://huggingface.co/optimum/all-mpnet-base-v2/resolve/main/model.onnx",
-            "https://huggingface.co/optimum/all-mpnet-base-v2/resolve/main/tokenizer.json",
-            "Higher quality embeddings (768 dim, recommended for code)",
-        ),
-        "bge-small-en-v1.5" => (
-            "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.onnx",
-            "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/tokenizer.json",
-            "BGE small embeddings (384 dim, good quality/speed balance)",
-        ),
-        _ => (
-            // Default fallback
-            "https://huggingface.co/optimum/all-MiniLM-L6-v2/resolve/main/model.onnx",
-            "https://huggingface.co/optimum/all-MiniLM-L6-v2/resolve/main/tokenizer.json",
-            "Default: all-minilm-l6-v2 (384 dim)",
-        ),
-    };
-
-    println!("Model: {} - {}", model_type, description);
-
-    download_file(model_url, &model_dir.join("model.onnx")).await?;
-    download_file(tokenizer_url, &model_dir.join("tokenizer.json")).await?;
+    crate::download::ensure_model_files(&config.storage.model_path, &config.storage.model_type)
+        .await?;
 
     println!("Model setup complete.");
-    Ok(())
-}
-
-async fn download_file(url: &str, path: &PathBuf) -> Result<()> {
-    if path.exists() {
-        println!("File {:?} already exists, skipping.", path);
-        return Ok(());
-    }
-
-    println!("Downloading {}...", url);
-
-    let res = reqwest::get(url).await?;
-    let total_size = res.content_length().unwrap_or(0);
-
-    let pb = ProgressBar::new(total_size);
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
-        .progress_chars("#>-"));
-
-    let mut file = fs::File::create(path)?;
-    let mut stream = res.bytes_stream();
-
-    while let Some(item) = stream.next().await {
-        let chunk = item?;
-        file.write_all(&chunk)?;
-        pb.inc(chunk.len() as u64);
-    }
-
-    pb.finish_with_message("Download complete");
     Ok(())
 }
 
