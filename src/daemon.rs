@@ -120,14 +120,21 @@ pub async fn run(config: Config) -> Result<()> {
 
                 for path in unique_paths {
                     let path_str = path.to_string_lossy().to_string();
-                    
+
                     // Explicitly ignore database files to prevent infinite watcher loops
-                    if path_str == db_path_str || path_str == format!("{}-wal", db_path_str) || path_str == format!("{}-shm", db_path_str) {
+                    if path_str == db_path_str
+                        || path_str == format!("{}-wal", db_path_str)
+                        || path_str == format!("{}-shm", db_path_str)
+                    {
                         continue;
                     }
-                    
+
                     // Enforce hard skips for heavy system directories
-                    if path_str.contains("/.git/") || path_str.contains("\\.git\\") || path_str.contains("/node_modules/") || path_str.contains("\\node_modules\\") {
+                    if path_str.contains("/.git/")
+                        || path_str.contains("\\.git\\")
+                        || path_str.contains("/node_modules/")
+                        || path_str.contains("\\node_modules\\")
+                    {
                         continue;
                     }
 

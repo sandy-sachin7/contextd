@@ -1,10 +1,14 @@
 use anyhow::Result;
 use lru::LruCache;
+use rusqlite::ffi::sqlite3_auto_extension;
 use rusqlite::{params, Connection, OptionalExtension};
+use sqlite_vec::sqlite3_vec_init;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::Path;
+use std::sync::Once;
 use std::sync::{Arc, Mutex};
+static INIT_SQLITE_VEC: Once = Once::new();
 
 #[derive(Clone)]
 pub struct Database {
@@ -14,6 +18,9 @@ pub struct Database {
 
 impl Database {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+        INIT_SQLITE_VEC.call_once(|| unsafe {
+            sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
+        });
         let conn = Connection::open(path)?;
 
         // Enable foreign keys and WAL mode
@@ -58,6 +65,14 @@ impl Database {
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
+                chunk_id INTEGER PRIMARY KEY,
+                embedding float[384]
+            )",
             [],
         )?;
 
@@ -144,6 +159,11 @@ impl Database {
 
     pub fn clear_chunks(&self, file_id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        // Delete from vec0 first
+        conn.execute(
+            "DELETE FROM chunks_vec WHERE chunk_id IN (SELECT id FROM chunks WHERE file_id = ?1)",
+            params![file_id],
+        )?;
         // Delete from FTS first (using subquery)
         conn.execute(
             "DELETE FROM chunks_fts WHERE rowid IN (SELECT id FROM chunks WHERE file_id = ?1)",
@@ -182,6 +202,14 @@ impl Database {
         )?;
 
         let chunk_id = conn.last_insert_rowid();
+
+        // Insert into vec0
+        if let Some(emb_bytes) = &embedding_bytes {
+            conn.execute(
+                "INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?1, ?2)",
+                params![chunk_id, emb_bytes.as_slice()],
+            )?;
+        }
 
         // Insert into FTS
         conn.execute(
@@ -372,62 +400,37 @@ impl Database {
         let paths = options.paths.as_deref();
         let min_score = options.min_score;
 
-        // Check cache
-        // Key: query_embedding (as bytes) + options (simplified)
-        // For v0, just cache based on embedding if options are default-ish
-        let cache_key = {
-            let mut key = Vec::with_capacity(query_embedding.len() * 4);
-            for val in query_embedding {
-                key.extend_from_slice(&val.to_le_bytes());
-            }
-            // Append options hash/bytes if needed. For now, let's assume options invalidate cache if they change?
-            // Or just cache raw search results and filter in memory?
-            // Let's keep it simple: Cache only if no filters are applied (except limit)
-            if options.start_time.is_none()
-                && options.end_time.is_none()
-                && options.file_types.is_none()
-                && options.paths.is_none()
-            {
-                Some(key)
-            } else {
-                None
-            }
-        };
-
-        if let Some(key) = &cache_key {
-            let mut cache = self.query_cache.lock().unwrap();
-            if let Some(results) = cache.get(key) {
-                // Apply limit and min_score from cached results
-                let mut results = results.clone();
-                if let Some(min) = min_score {
-                    results.retain(|r| r.score >= min);
-                }
-                results.truncate(limit);
-                return Ok(results);
-            }
-        }
-
         let conn = self.conn.lock().unwrap();
 
-        // Build query with optional filters - include file_id for frequency tracking
+        let mut query_bytes = Vec::with_capacity(query_embedding.len() * 4);
+        for val in query_embedding {
+            query_bytes.extend_from_slice(&val.to_le_bytes());
+        }
+
         let mut sql =
-            "SELECT c.id, c.content, c.embedding, f.path, f.last_modified, f.id as file_id,
+            "SELECT c.id, c.content, vec_distance_cosine(v.embedding, ?1) as distance, f.path, f.last_modified, f.id as file_id,
                               COALESCE(qh.hit_count, 0) as hit_count
                        FROM chunks c
+                       JOIN chunks_vec v ON c.id = v.chunk_id
                        JOIN files f ON c.file_id = f.id
                        LEFT JOIN query_hits qh ON f.id = qh.file_id
-                       WHERE c.embedding IS NOT NULL"
+                       WHERE 1=1"
                 .to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        params.push(Box::new(query_bytes));
+
+        let mut param_idx = 2;
 
         if let Some(start) = start_time {
-            sql.push_str(" AND f.last_modified >= ?");
+            sql.push_str(&format!(" AND f.last_modified >= ?{}", param_idx));
             params.push(Box::new(start));
+            param_idx += 1;
         }
 
         if let Some(end) = end_time {
-            sql.push_str(" AND f.last_modified <= ?");
+            sql.push_str(&format!(" AND f.last_modified <= ?{}", param_idx));
             params.push(Box::new(end));
+            param_idx += 1;
         }
 
         let mut stmt = conn.prepare(&sql)?;
@@ -436,7 +439,7 @@ impl Database {
         let chunk_iter = stmt.query_map(params_refs.as_slice(), |row| {
             let id: i64 = row.get(0)?;
             let content: String = row.get(1)?;
-            let embedding_blob: Vec<u8> = row.get(2)?;
+            let distance: f32 = row.get(2)?;
             let file_path: String = row.get(3)?;
             let last_modified: u64 = row.get(4)?;
             let file_id: i64 = row.get(5)?;
@@ -444,7 +447,7 @@ impl Database {
             Ok((
                 id,
                 content,
-                embedding_blob,
+                distance,
                 file_path,
                 last_modified,
                 file_id,
@@ -455,51 +458,38 @@ impl Database {
         let mut scored_chunks = Vec::new();
 
         for chunk in chunk_iter {
-            let (id, content, embedding_blob, file_path, last_modified, _file_id, hit_count) =
-                chunk?;
+            let (id, content, distance, file_path, last_modified, _file_id, hit_count) = chunk?;
 
-            // Extract file extension
             let file_type = file_path.rsplit('.').next().unwrap_or("").to_lowercase();
 
-            // Apply file type filter
             if let Some(types) = file_types {
                 if !types.iter().any(|t| t.to_lowercase() == file_type) {
                     continue;
                 }
             }
 
-            // Apply path filter
             if let Some(path_filters) = paths {
                 if !path_filters.iter().any(|p| file_path.contains(p)) {
                     continue;
                 }
             }
 
-            // Convert bytes back to Vec<f32>
-            let embedding: Vec<f32> = embedding_blob
-                .chunks_exact(4)
-                .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
-                .collect();
+            // distance is typically 1 - cosine_similarity for vectors, wait no, vec_distance_cosine returns distance.
+            // Let's assume score = 1.0 - distance to match previous cosine similarity logic.
+            // Wait, vec_distance_cosine in sqlite-vec returns the cosine distance (0.0 means identical, up to 2.0).
+            // We want similarity, which is 1.0 - distance.
+            let mut score = 1.0 - distance;
 
-            if embedding.len() != query_embedding.len() {
-                continue;
-            }
+            // Re-apply original similarity range?
+            // In original it was: a*b sum, which is dot product. If vectors are normalized, dot product = cosine similarity.
+            // distance = 1 - cosine_similarity. So score = 1.0 - distance is exactly dot product.
 
-            // Cosine similarity
-            let score: f32 = embedding
-                .iter()
-                .zip(query_embedding)
-                .map(|(a, b)| a * b)
-                .sum();
-
-            // Apply minimum score filter
             if let Some(min) = min_score {
                 if score < min {
                     continue;
                 }
             }
 
-            // Apply recency boost
             let recency_weight = options.recency_weight.unwrap_or(0.1);
             let recency_adjusted = if recency_weight > 0.0 {
                 let now = std::time::SystemTime::now()
@@ -507,17 +497,14 @@ impl Database {
                     .unwrap()
                     .as_secs();
                 let age_hours = (now.saturating_sub(last_modified)) / 3600;
-                // Decay: files lose ~50% boost after 24 hours
                 let recency_boost = 1.0 / (1.0 + (age_hours as f32 / 24.0));
                 score * (1.0 - recency_weight) + recency_boost * recency_weight
             } else {
                 score
             };
 
-            // Apply frequency boost (additive, logarithmic scaling)
             let frequency_weight = options.frequency_weight.unwrap_or(0.1);
             let final_score = if frequency_weight > 0.0 && hit_count > 0 {
-                // Additive boost: base_score + weight * ln(1 + hit_count)
                 let freq_boost = (hit_count as f32).ln_1p() * frequency_weight;
                 recency_adjusted + freq_boost
             } else {
@@ -540,19 +527,6 @@ impl Database {
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-
-        // Update cache
-        if let Some(key) = cache_key {
-            let mut cache = self.query_cache.lock().unwrap();
-            // Cache the full results (up to a reasonable limit, e.g. 50) so we can slice later
-            let cache_limit = 50;
-            let cached_chunks = if scored_chunks.len() > cache_limit {
-                scored_chunks[..cache_limit].to_vec()
-            } else {
-                scored_chunks.clone()
-            };
-            cache.put(key, cached_chunks);
-        }
 
         scored_chunks.truncate(limit);
 

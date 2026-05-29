@@ -43,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
                 eprintln!("Models not found in {:?}. Please run 'contextd daemon' or start the VS Code extension to initialize them before using MCP.", config.storage.model_path);
                 std::process::exit(1);
             }
-            
+
             let db = Database::new(&config.storage.db_path)?;
             let embedder = Arc::new(Embedder::new(&config.storage)?);
             mcp::run_mcp_server(db, embedder, config).await;

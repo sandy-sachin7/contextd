@@ -197,11 +197,18 @@ const TOOLS: &[Tool] = &[
     Tool {
         id: "codex",
         name: "Codex",
-        detect: || binary_in_path("codex") || PathBuf::from(&home_dir()).join(".codex/config.toml").exists(),
-        config_paths: || vec![
-            PathBuf::from(".").join(".codex/config.toml"),
-            PathBuf::from(&home_dir()).join(".codex/config.toml"),
-        ],
+        detect: || {
+            binary_in_path("codex")
+                || PathBuf::from(&home_dir())
+                    .join(".codex/config.toml")
+                    .exists()
+        },
+        config_paths: || {
+            vec![
+                PathBuf::from(".").join(".codex/config.toml"),
+                PathBuf::from(&home_dir()).join(".codex/config.toml"),
+            ]
+        },
         generate_config: |binary| json!({ "mcp_servers": { "contextd": { "command": binary, "args": ["mcp"] } } }),
     },
 ];
@@ -271,16 +278,18 @@ pub async fn handle_connect(all: bool) -> Result<()> {
             let existing: Value = match fs::read_to_string(cfg_path) {
                 Ok(content) => {
                     if is_toml {
-                        toml::from_str(&content).unwrap_or_else(|_| Value::Object(Default::default()))
+                        toml::from_str(&content)
+                            .unwrap_or_else(|_| Value::Object(Default::default()))
                     } else {
-                        serde_json::from_str(&content).unwrap_or_else(|_| Value::Object(Default::default()))
+                        serde_json::from_str(&content)
+                            .unwrap_or_else(|_| Value::Object(Default::default()))
                     }
                 }
                 Err(_) => Value::Object(Default::default()),
             };
 
             let merged = tool.merge(&existing, &binary);
-            
+
             let serialized = if is_toml {
                 toml::to_string_pretty(&merged)
                     .with_context(|| format!("Failed to serialize TOML for {:?}", cfg_path))?
@@ -288,7 +297,7 @@ pub async fn handle_connect(all: bool) -> Result<()> {
                 serde_json::to_string_pretty(&merged)
                     .with_context(|| format!("Failed to serialize JSON for {:?}", cfg_path))?
             };
-            
+
             fs::write(cfg_path, &serialized)
                 .with_context(|| format!("Failed to write config to {:?}", cfg_path))?;
             configured += 1;

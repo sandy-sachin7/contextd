@@ -37,6 +37,8 @@ reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"
 indicatif = "0.17"
 lru = "0.16.3"
 futures-util = "0.3" # Useful for stream handling with reqwest
+sqlite-vec = "0.1.9"
+moka = { version = "0.12.15", features = ["sync"] }
 
 
 [dev-dependencies]
