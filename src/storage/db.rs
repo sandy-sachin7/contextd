@@ -416,7 +416,6 @@ impl Database {
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         params.push(Box::new(query_bytes));
 
-
         let mut param_idx = 2;
 
         if let Some(start) = start_time {
