@@ -1,0 +1,16 @@
+[book]
+authors = ["Santhosh Sachin"]
+language = "en"
+multilingual = false
+src = "src"
+title = "contextd Documentation"
+
+[output.html]
+default-theme = "ayu"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/sandy-sachin7/contextd"
+edit-url-template = "https://github.com/sandy-sachin7/contextd/edit/main/docs/book/src/{path}"
+
+[output.html.fold]
+enable = true
+level = 1

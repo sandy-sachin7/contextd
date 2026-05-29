@@ -1,15 +1,12 @@
-mod api;
-mod config;
-mod daemon;
-mod indexer;
-mod mcp;
-mod storage;
-
-mod cli;
-
 use clap::Parser;
-use config::Config;
 use std::path::PathBuf;
+
+use contextd::cli;
+use contextd::config::Config;
+use contextd::daemon;
+use contextd::indexer::embeddings::Embedder;
+use contextd::mcp;
+use contextd::storage::db::Database;
 use std::sync::Arc;
 
 #[derive(Parser, Debug)]
@@ -30,10 +27,8 @@ async fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
 
     let config = if args.config.exists() {
-        // eprintln!("Loading config from {}", args.config.display());
         Config::load(&args.config)?
     } else {
-        // eprintln!("Config not found at {}, using defaults", args.config.display());
         Config::default()
     };
 
@@ -44,8 +39,8 @@ async fn main() -> anyhow::Result<()> {
         }
         cli::Commands::Mcp => {
             eprintln!("contextd starting in MCP mode...");
-            let db = storage::db::Database::new(&config.storage.db_path)?;
-            let embedder = Arc::new(indexer::embeddings::Embedder::new(&config.storage)?);
+            let db = Database::new(&config.storage.db_path)?;
+            let embedder = Arc::new(Embedder::new(&config.storage)?);
             mcp::run_mcp_server(db, embedder, config).await;
         }
         cli::Commands::Setup => {

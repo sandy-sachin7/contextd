@@ -1,0 +1,38 @@
+#compdef contextd
+
+_contextd() {
+    local context state state_descr line
+    typeset -A opt_args
+
+    _arguments -C \
+        '(-c --config)'{-c,--config}'[Path to configuration file]:config file:_files' \
+        '(-h --help)'{-h,--help}'[Print help]' \
+        '(-V --version)'{-V,--version}'[Print version]' \
+        '1: :->cmds' \
+        '2: :->args'
+
+    case $state in
+        cmds)
+            _alternative 'subcommands:sub command:((daemon:"Run as a background service" mcp:"Run as an MCP server" setup:"Download embedding model" query:"One-off semantic search"))'
+            ;;
+        args)
+            case $line[1] in
+                query)
+                    _arguments \
+                        '(-l --limit)'{-l,--limit}'[Maximum results]' \
+                        '(-s --min-score)'{-s,--min-score}'[Minimum relevance score]' \
+                        '(-a --after)'{-a,--after}'[Filter by earliest modification time]' \
+                        '(-b --before)'{-b,--before}'[Filter by latest modification time]' \
+                        '1:query string:'
+                    ;;
+                daemon|mcp|setup)
+                    _arguments \
+                        '(-c --config)'{-c,--config}'[Path to configuration file]:config file:_files' \
+                        '(-h --help)'{-h,--help}'[Print help]'
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_contextd "$@"

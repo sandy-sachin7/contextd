@@ -1,0 +1,32 @@
+[advisories]
+# Known issues tracked in https://github.com/sandy-sachin7/contextd/issues
+# ring: RUSTSEC-2025-0009 - AES panic on overflow checking.
+#   Can't upgrade due to cc version conflict with tree-sitter 0.20 language crates.
+# rustls-webpki: RUSTSEC-2026-0099, RUSTSEC-2026-0104, RUSTSEC-2026-0098
+#   Can't upgrade past 0.101.x without upgrading reqwest to 0.12+ (breaking change).
+ignore = [
+    "RUSTSEC-2025-0009",  # ring 0.17.9 - AES panic
+    "RUSTSEC-2026-0099",  # rustls-webpki 0.101.7 - name constraints
+    "RUSTSEC-2026-0104",  # rustls-webpki 0.101.7 - CRL panic
+    "RUSTSEC-2026-0098",  # rustls-webpki 0.101.7 - URI name constraints
+]
+informational_warnings = ["notice", "unmaintained"]
+severity_threshold = "low"
+
+[database]
+fetch = true
+stale = false
+
+[output]
+deny = []
+format = "terminal"
+quiet = false
+show_tree = true
+
+[target]
+arch = ["x86_64", "aarch64"]
+os = ["linux", "macos", "windows"]
+
+[yanked]
+enabled = true
+update_index = true
