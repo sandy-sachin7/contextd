@@ -4,6 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/sandy-sachin7/contextd)](https://github.com/sandy-sachin7/contextd/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-blue)](https://modelcontextprotocol.io)
+[![Playground](https://img.shields.io/badge/try-playground-brightgreen)](scripts/playground.sh)
 
 > **Local-first semantic search meets AI context** - A privacy-preserving daemon that transforms your codebase into queryable intelligence for AI assistants.
 
@@ -18,6 +19,14 @@
 - 🔌 **Extensible** - Plugin system for any file format
 
 ## Quick Start
+
+### 0. Playground (Try in 30 Seconds)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sandy-sachin7/contextd/main/scripts/playground.sh | bash
+```
+
+This downloads contextd, indexes your current directory, and runs a semantic search — no setup needed.
 
 ### 1. Install
 
@@ -53,25 +62,33 @@ cargo build --release
 ./target/release/contextd query "authentication system"
 ```
 
-### 3. Connect your AI Tool
+### 3. Connect your AI Tools (Automatic)
 
-contextd works with Claude Desktop, Cline, Roo Code, and more.
-
-**Example (Claude Desktop):**
-Add to `claude_desktop_config.json`:
-```json
-{
-  "mcpServers": {
-    "contextd": {
-      "command": "/path/to/contextd/target/release/contextd",
-      "args": ["mcp"],
-      "env": {}
-    }
-  }
-}
+```bash
+# Auto-detect AI tools and configure MCP for all of them
+contextd connect --all
 ```
 
-See [MCP Integration Guide](docs/mcp-integration.md) for other tools.
+contextd supports **8 AI tools** out of the box:
+
+| Tool | Config Format | Detection |
+|------|--------------|-----------|
+| **Claude Desktop** | Object (`mcpServers`) | Binary in PATH |
+| **Claude Code** | Object (`mcpServers`) | Binary in PATH |
+| **Cursor** | Object (`mcpServers`) | Binary or `.cursor/` dir |
+| **VSCode Copilot** | Object (`servers`) | Always detected |
+| **Copilot CLI** | Object (`mcpServers`) | Binary in PATH |
+| **OpenCode** | Object (`mcp` + `$schema`) | Binary or `~/.config/opencode/` |
+| **Continue** | Array (`mcpServers[]`) | `~/.continue/` directory |
+| **Antigravity (agy)** | Object (`mcpServers`) | Binary in PATH |
+
+Each `contextd connect` run:
+1. Detects installed tools
+2. Reads existing config (preserves other entries)
+3. Adds or updates `contextd` MCP server entry
+4. Writes config atomically
+
+See [MCP Integration Guide](docs/mcp-integration.md) for manual setup.
 
 ## Features in Detail
 
@@ -186,6 +203,18 @@ model_type = "all-minilm-l6-v2"  # See available models below
 To switch models, change `model_type` in config and run:
 ```bash
 contextd setup
+```
+
+### Full Configuration
+```toml
+[server]
+host = "127.0.0.1"
+port = 3030
+
+[storage]
+db_path = "contextd.db"
+model_path = "models"
+model_type = "all-minilm-l6-v2"
 
 [search]
 enable_cache = true
@@ -270,8 +299,10 @@ contextd works with any tool that supports the [Model Context Protocol](https://
 - **Cline / Roo Code**: [Setup Guide](docs/mcp-integration.md#cline--roo-code)
 - **Continue**: [Setup Guide](docs/mcp-integration.md#continue)
 
-### VSCode Extension
-In development !
+### VSCode Extension [![VSCode Marketplace](https://img.shields.io/badge/VSCode-Marketplace-blue)](https://marketplace.visualstudio.com/items?itemName=sandy-sachin7.contextd-vscode)
+
+Full-featured extension with webview search panel, QuickPick, sidebar, and daemon lifecycle management.
+Install from [marketplace](https://marketplace.visualstudio.com/items?itemName=sandy-sachin7.contextd-vscode) or search "contextd" in VSCode extensions.
 
 ### Obsidian Plugin
 Community contribution welcome!
@@ -287,13 +318,15 @@ Benchmarks on a typical codebase (10K files, ~500K LOC):
 
 ## Comparison
 
-| Feature | contextd | Sourcegraph | GitHub Copilot | Cursor |
-|---------|----------|-------------|----------------|--------|
-| Local-first | ✅ | ❌ | ❌ | ❌ |
-| MCP Native | ✅ | ❌ | ❌ | ❌ |
-| Hybrid Search | ✅ | ✅ | ❌ | ✅ |
-| Open Source | ✅ | Partial | ❌ | ❌ |
-| Self-hosted | ✅ | ✅ ($$$) | ❌ | ❌ |
+| Feature | contextd | Sourcegraph | GitHub Copilot | Cursor | Roo Code |
+|---------|----------|-------------|----------------|--------|---------|
+| Local-first | ✅ | ❌ | ❌ | ❌ | ✅ |
+| MCP Native | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Hybrid Search | ✅ | ✅ | ❌ | ✅ | ❌ |
+| Open Source | ✅ | Partial | ❌ | ❌ | ✅ |
+| Self-hosted | ✅ | ✅ ($$$) | ❌ | ❌ | ✅ |
+| Auto-configure 8 tools | ✅ | ❌ | ❌ | ❌ | ❌ |
+| VSCode Extension | ✅ | ✅ | ✅ | ❌ | ✅ |
 
 ## Testing
 
@@ -337,7 +370,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md)
 - [x] Docker image ✅ v0.2.0
 - [x] Recency boost ✅ v1.0.0
 - [x] Frequency ranking ✅ v1.1.0
-- [ ] VSCode extension
+- [x] VSCode extension ✅
+- [x] Automatic MCP configuration for 8 AI tools ✅
 - [ ] Additional embedding models (CodeBERT, UniXcoder)
 - [ ] Re-ranking layer (cross-encoder)
 - [ ] Smart Context Windows

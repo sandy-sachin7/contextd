@@ -13,11 +13,13 @@ https://github.com/sandy-sachin7/contextd
 
 ```bash
 cargo build --release
-cargo test                    # unit tests
+cargo test                    # unit tests (43 + 4 + 5 + 3 = 55)
 cargo test --test load_test   # integration tests
 cargo test --test watcher_test
+cargo test --test zero_config_test  # auto-download tests
 python3 scripts/test_mcp_local.py  # MCP E2E tests
 python3 scripts/memory_stress_test.py  # memory stress test
+bash scripts/playground.sh    # one-line playground
 ```
 
 ## CI
