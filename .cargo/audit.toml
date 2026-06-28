@@ -9,6 +9,7 @@ ignore = [
     "RUSTSEC-2026-0099",  # rustls-webpki 0.101.7 - name constraints
     "RUSTSEC-2026-0104",  # rustls-webpki 0.101.7 - CRL panic
     "RUSTSEC-2026-0098",  # rustls-webpki 0.101.7 - URI name constraints
+    "RUSTSEC-2026-0187",  # lopdf 0.34.0 - stack overflow (pdf-extract transitive dep; needs major version upgrade)
 ]
 informational_warnings = ["notice", "unmaintained"]
 severity_threshold = "low"

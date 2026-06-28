@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.1.1] - 2026-06-29
+
+### Fixed
+- Security: suppressed lopdf stack overflow advisory (RUSTSEC-2026-0187) in cargo-audit CI.
+- CI: pinned audit workflow dependency resolution to prevent cascading upgrade failures.
+
 ## [3.0.3] - 2025-05-XX
 
 ### Changed
