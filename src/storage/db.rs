@@ -249,7 +249,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         conn.execute(
             "INSERT INTO query_hits (file_id, hit_count, last_hit)
@@ -496,7 +496,7 @@ impl Database {
             let recency_adjusted = if recency_weight > 0.0 {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs();
                 let age_hours = (now.saturating_sub(last_modified)) / 3600;
                 let recency_boost = 1.0 / (1.0 + (age_hours as f32 / 24.0));
