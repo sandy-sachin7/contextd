@@ -380,9 +380,9 @@ impl Database {
         }
 
         final_results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            let sa = if a.score.is_nan() { 0.0 } else { a.score };
+            let sb = if b.score.is_nan() { 0.0 } else { b.score };
+            sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
         });
         final_results.truncate(limit);
 
@@ -525,9 +525,9 @@ impl Database {
         }
 
         scored_chunks.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            let sa = if a.score.is_nan() { 0.0 } else { a.score };
+            let sb = if b.score.is_nan() { 0.0 } else { b.score };
+            sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
         });
 
         scored_chunks.truncate(limit);
