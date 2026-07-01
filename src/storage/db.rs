@@ -426,7 +426,7 @@ impl Database {
 
         if let Some(end) = end_time {
             sql.push_str(&format!(" AND f.last_modified <= ?{}", param_idx));
-            let _ = param_idx;
+            param_idx += 1;
             params.push(Box::new(end));
         }
 
@@ -825,5 +825,53 @@ mod tests {
         // This should not panic or error due to syntax
         let results = db.search_chunks_enhanced(&embedding, &options).unwrap();
         assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_search_with_time_range() {
+        let db = Database::new(":memory:").unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let one_hour_ago = now - 3600;
+        let two_hours_ago = now - 7200;
+
+        let recent_id = db.add_or_update_file("/recent.rs", now).unwrap();
+        let mid_id = db.add_or_update_file("/mid.rs", one_hour_ago).unwrap();
+        let old_id = db.add_or_update_file("/old.rs", two_hours_ago).unwrap();
+
+        let embedding: Vec<f32> = vec![1.0; 384];
+        db.add_chunk(recent_id, 0, 10, "function a", Some(&embedding), None)
+            .unwrap();
+        db.add_chunk(mid_id, 0, 10, "function b", Some(&embedding), None)
+            .unwrap();
+        db.add_chunk(old_id, 0, 10, "function c", Some(&embedding), None)
+            .unwrap();
+        db.mark_indexed(recent_id).unwrap();
+        db.mark_indexed(mid_id).unwrap();
+        db.mark_indexed(old_id).unwrap();
+
+        // Filter to only mid-age files: one_hour_ago <= last_modified <= now
+        let options = SearchOptions {
+            limit: Some(10),
+            start_time: Some(one_hour_ago),
+            end_time: Some(now),
+            recency_weight: Some(0.0),
+            ..Default::default()
+        };
+        let results = db.search_chunks_enhanced(&embedding, &options).unwrap();
+
+        // With the bug, both ?2 and ?2 bind to the same value, so we get 1 or 0 results.
+        // With the fix, we should get 2: recent.rs (now) and mid.rs (one_hour_ago).
+        // old.rs (two_hours_ago) is outside the range.
+        assert_eq!(
+            results.len(),
+            2,
+            "Expected 2 files in time range [{}, {}], got {}",
+            one_hour_ago,
+            now,
+            results.len()
+        );
     }
 }
