@@ -7,12 +7,12 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: Arc<Mutex<Database>>,
+    pub db: Arc<Database>,
     pub embedder: Arc<Embedder>,
     pub start_time: u64,
 }
@@ -25,6 +25,7 @@ pub struct AppState {
 pub struct QueryRequest {
     pub query: String,
     pub limit: Option<usize>,
+    pub max_results: Option<usize>,
     pub start_time: Option<u64>,
     pub end_time: Option<u64>,
     // Enhanced filters
@@ -83,7 +84,7 @@ pub async fn run_server(db: Database, embedder: Arc<Embedder>, host: &str, port:
         .as_secs();
 
     let state = AppState {
-        db: Arc::new(Mutex::new(db)),
+        db: Arc::new(db),
         embedder,
         start_time,
     };
@@ -115,11 +116,8 @@ async fn handle_health(State(state): State<AppState>) -> Json<HealthResponse> {
 async fn handle_status(State(state): State<AppState>) -> Result<Json<StatusResponse>, StatusCode> {
     let uptime = current_time() - state.start_time;
 
-    let db = state
+    let stats = state
         .db
-        .lock()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let stats = db
         .get_stats()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -148,10 +146,12 @@ async fn handle_query(
     };
 
     // Search DB
-    let db = state.db.lock().unwrap();
+
+    let limit = payload.limit.unwrap_or(5);
+    let max_results = payload.max_results.unwrap_or(limit);
 
     let options = crate::storage::db::SearchOptions {
-        limit: Some(payload.limit.unwrap_or(5)),
+        limit: Some(limit),
         start_time: payload.start_time,
         end_time: payload.end_time,
         file_types: payload.file_types,
@@ -162,7 +162,7 @@ async fn handle_query(
         context_lines: None,    // Use default
     };
 
-    let results = match db.search_chunks_enhanced(&embedding, &options) {
+    let mut results: Vec<QueryResult> = match state.db.search_chunks_enhanced(&embedding, &options) {
         Ok(res) => res
             .into_iter()
             .map(|r| QueryResult {
@@ -178,6 +178,8 @@ async fn handle_query(
             vec![]
         }
     };
+
+    results.truncate(max_results);
 
     Json(QueryResponse { results })
 }
