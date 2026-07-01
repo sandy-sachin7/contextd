@@ -66,6 +66,11 @@ impl Database {
         )?;
 
         conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id)",
+            [],
+        )?;
+
+        conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
                 chunk_id INTEGER PRIMARY KEY,
                 embedding float[384]
