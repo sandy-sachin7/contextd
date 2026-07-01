@@ -438,30 +438,27 @@ impl Database {
         let mut stmt = conn.prepare(&sql)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-        let chunk_iter = stmt.query_map(params_refs.as_slice(), |row| {
-            let id: i64 = row.get(0)?;
-            let content: String = row.get(1)?;
-            let distance: f32 = row.get(2)?;
-            let file_path: String = row.get(3)?;
-            let last_modified: u64 = row.get(4)?;
-            let file_id: i64 = row.get(5)?;
-            let hit_count: i64 = row.get(6)?;
-            Ok((
-                id,
-                content,
-                distance,
-                file_path,
-                last_modified,
-                file_id,
-                hit_count,
-            ))
-        })?;
+        let raw_rows: Vec<(i64, String, f32, String, u64, i64, i64)> = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        drop(stmt);
+        drop(conn);
 
         let mut scored_chunks = Vec::new();
 
-        for chunk in chunk_iter {
-            let (id, content, distance, file_path, last_modified, _file_id, hit_count) = chunk?;
-
+        for (id, content, distance, file_path, last_modified, _file_id, hit_count) in raw_rows {
             let file_type = file_path.rsplit('.').next().unwrap_or("").to_lowercase();
 
             if let Some(types) = file_types {
@@ -476,15 +473,7 @@ impl Database {
                 }
             }
 
-            // distance is typically 1 - cosine_similarity for vectors, wait no, vec_distance_cosine returns distance.
-            // Let's assume score = 1.0 - distance to match previous cosine similarity logic.
-            // Wait, vec_distance_cosine in sqlite-vec returns the cosine distance (0.0 means identical, up to 2.0).
-            // We want similarity, which is 1.0 - distance.
             let score = 1.0 - distance;
-
-            // Re-apply original similarity range?
-            // In original it was: a*b sum, which is dot product. If vectors are normalized, dot product = cosine similarity.
-            // distance = 1 - cosine_similarity. So score = 1.0 - distance is exactly dot product.
 
             if let Some(min) = min_score {
                 if score < min {
