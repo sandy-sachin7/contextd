@@ -52,6 +52,20 @@ struct Tool {
     description: String,
     #[serde(rename = "inputSchema")]
     input_schema: Value,
+    annotations: ToolAnnotations,
+}
+
+#[derive(Serialize)]
+struct ToolAnnotations {
+    title: String,
+    #[serde(rename = "readOnlyHint")]
+    read_only_hint: bool,
+    #[serde(rename = "destructiveHint")]
+    destructive_hint: bool,
+    #[serde(rename = "idempotentHint")]
+    idempotent_hint: bool,
+    #[serde(rename = "openWorldHint")]
+    open_world_hint: bool,
 }
 
 #[derive(Serialize)]
@@ -105,7 +119,14 @@ impl ContextdServer {
                 eprintln!("MCP initialize request received");
                 Ok(serde_json::to_value(InitializeResult {
                     protocol_version: "2024-11-05".to_string(),
-                    capabilities: serde_json::Map::new(),
+                    capabilities: {
+                        let mut caps = serde_json::Map::new();
+                        caps.insert(
+                            "tools".to_string(),
+                            serde_json::json!({"listChanged": true}),
+                        );
+                        caps
+                    },
                     server_info: ServerInfo {
                         name: "contextd".to_string(),
                         version: "0.1.0".to_string(),
@@ -119,7 +140,7 @@ impl ContextdServer {
                     tools: vec![
                         Tool {
                             name: "search_context".to_string(),
-                            description: "Search for relevant code and documentation using semantic search.".to_string(),
+                            description: "Semantic search over your indexed codebase. Use this to find relevant functions, classes, documentation, and code snippets. Works best with descriptive queries like 'error handling in auth module' or 'database connection pool implementation'.".to_string(),
                             input_schema: serde_json::json!({
                                 "type": "object",
                                 "properties": {
@@ -128,16 +149,32 @@ impl ContextdServer {
                                     "file_types": { "type": "array", "items": { "type": "string" }, "description": "Filter by file extension" },
                                     "min_score": { "type": "number", "description": "Minimum similarity score (0.0-1.0)" }
                                 },
-                                "required": ["query"]
+                                "required": ["query"],
+                                "additionalProperties": false
                             }),
+                            annotations: ToolAnnotations {
+                                title: "Search Context".to_string(),
+                                read_only_hint: true,
+                                destructive_hint: false,
+                                idempotent_hint: true,
+                                open_world_hint: true,
+                            },
                         },
                         Tool {
                             name: "get_status".to_string(),
-                            description: "Get indexing status and statistics.".to_string(),
+                            description: "Get current indexing status: number of indexed files, total chunks, and database size. Use this to check if indexing is complete before searching, or to monitor the daemon's state.".to_string(),
                             input_schema: serde_json::json!({
                                 "type": "object",
                                 "properties": {},
+                                "additionalProperties": false
                             }),
+                            annotations: ToolAnnotations {
+                                title: "Get Status".to_string(),
+                                read_only_hint: true,
+                                destructive_hint: false,
+                                idempotent_hint: true,
+                                open_world_hint: true,
+                            },
                         },
                     ],
                 }).unwrap())
