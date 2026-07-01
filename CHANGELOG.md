@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.1.2] - 2026-07-02
+
+### Fixed
+- `end_time` parameter binding in `search_chunks_enhanced` (both bounds now use distinct param indices).
+- System clock `unwrap()` replaced with `unwrap_or_default()` to prevent mutex poisoning.
+- NaN scores in sorting mapped to 0.0 for deterministic ordering.
+
+### Changed
+- Mutex critical section in `search_chunks_enhanced` shortened: rows collected inside lock, scoring outside.
+- Redundant outer `Mutex<Database>` removed from `AppState` — API handlers access `Database` directly.
+- Added index on `chunks.file_id` for faster chunk lookups and joins.
+
+### Added
+- MCP server: tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`).
+- MCP server: `tools.listChanged` capability declaration.
+- MCP server: `additionalProperties: false` on tool input schemas.
+- API: `max_results` field on `QueryRequest` for capping response size independently of search limit.
+
 ## [3.1.1] - 2026-06-29
 
 ### Fixed
