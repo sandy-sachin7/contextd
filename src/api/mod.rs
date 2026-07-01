@@ -162,7 +162,8 @@ async fn handle_query(
         context_lines: None,    // Use default
     };
 
-    let mut results: Vec<QueryResult> = match state.db.search_chunks_enhanced(&embedding, &options) {
+    let mut results: Vec<QueryResult> = match state.db.search_chunks_enhanced(&embedding, &options)
+    {
         Ok(res) => res
             .into_iter()
             .map(|r| QueryResult {

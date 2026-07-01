@@ -422,17 +422,19 @@ impl Database {
         params.push(Box::new(query_bytes));
 
         let mut param_idx = 2;
+        #[allow(unused_assignments)]
+        {
+            if let Some(start) = start_time {
+                sql.push_str(&format!(" AND f.last_modified >= ?{}", param_idx));
+                param_idx += 1;
+                params.push(Box::new(start));
+            }
 
-        if let Some(start) = start_time {
-            sql.push_str(&format!(" AND f.last_modified >= ?{}", param_idx));
-            param_idx += 1;
-            params.push(Box::new(start));
-        }
-
-        if let Some(end) = end_time {
-            sql.push_str(&format!(" AND f.last_modified <= ?{}", param_idx));
-            param_idx += 1;
-            params.push(Box::new(end));
+            if let Some(end) = end_time {
+                sql.push_str(&format!(" AND f.last_modified <= ?{}", param_idx));
+                param_idx += 1;
+                params.push(Box::new(end));
+            }
         }
 
         let mut stmt = conn.prepare(&sql)?;
