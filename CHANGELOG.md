@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.1.3] - 2026-07-02
+
+### Fixed
+- Flaky load tests: daemon stdin pipe management and health-based startup wait.
+- Cargo.lock drift after formatting fixes.
+
 ## [3.1.2] - 2026-07-02
 
 ### Fixed
