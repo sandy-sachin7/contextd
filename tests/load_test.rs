@@ -6,18 +6,46 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::process::Command;
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
 const TEST_PORT: u16 = 13030; // Different from default 3030
 
-/// Helper to start the daemon in the background
-async fn start_test_daemon(config_path: PathBuf) -> tokio::process::Child {
-    Command::new("./target/release/contextd")
+/// Helper to start the daemon in the background and wait for its health endpoint
+async fn start_test_daemon(
+    config_path: PathBuf,
+    port: u16,
+) -> (
+    tokio::process::Child,
+    Client,
+    Option<tokio::process::ChildStdin>,
+) {
+    use std::process::Stdio;
+    let mut daemon = Command::new("./target/release/contextd")
         .arg("--config")
         .arg(config_path)
         .arg("daemon")
+        .stdin(Stdio::piped())
         .spawn()
-        .expect("Failed to start daemon")
+        .expect("Failed to start daemon");
+
+    // Keep the stdin pipe open so the daemon's EOF monitor stays blocked
+    let stdin_writer = daemon.stdin.take();
+
+    let client = Client::new();
+    let health_url = format!("http://127.0.0.1:{}/health", port);
+
+    for _ in 0..30 {
+        if let Ok(resp) = client.get(&health_url).send().await {
+            if resp.status().is_success() {
+                return (daemon, client, stdin_writer);
+            }
+        }
+        sleep(Duration::from_millis(500)).await;
+    }
+
+    let _ = daemon.kill().await;
+    let _ = tokio::time::timeout(Duration::from_secs(1), daemon.wait()).await;
+    panic!("Daemon didn't become healthy within 15s");
 }
 
 /// Test concurrent API requests
@@ -54,36 +82,8 @@ max_chunk_size = 512
     let config_path = temp_dir.path().join("test_config.toml");
     fs::write(&config_path, config).unwrap();
 
-    // Start daemon
-    let mut daemon = start_test_daemon(config_path).await;
-
-    // Wait for daemon to start and become ready
-    sleep(Duration::from_secs(5)).await;
-
-    let client = Client::new();
+    let (mut daemon, client, _stdin) = start_test_daemon(config_path, TEST_PORT).await;
     let base_url = format!("http://127.0.0.1:{}", TEST_PORT);
-
-    // Retry health check a few times
-    let mut health_ok = false;
-    for _ in 0..10 {
-        if let Ok(Ok(resp)) = timeout(
-            Duration::from_secs(2),
-            client.get(format!("{}/health", base_url)).send(),
-        )
-        .await
-        {
-            if resp.status().is_success() {
-                health_ok = true;
-                break;
-            }
-        }
-        sleep(Duration::from_millis(500)).await;
-    }
-
-    if !health_ok {
-        let _ = daemon.kill().await;
-        panic!("Daemon didn't start in time or health endpoint failed");
-    }
 
     // Send 50 concurrent requests
     let mut handles = vec![];
@@ -161,11 +161,7 @@ max_chunk_size = 512
     let config_path = temp_dir.path().join("test_config.toml");
     fs::write(&config_path, config).unwrap();
 
-    // Start daemon
-    let mut daemon = start_test_daemon(config_path).await;
-
-    // Wait for daemon to start
-    sleep(Duration::from_secs(3)).await;
+    let (mut daemon, _, _stdin) = start_test_daemon(config_path, TEST_PORT + 1).await;
 
     // Create 100 files rapidly
     for i in 0..100 {
@@ -215,13 +211,7 @@ max_chunk_size = 512
     let config_path = temp_dir.path().join("test_config.toml");
     fs::write(&config_path, config).unwrap();
 
-    // Start daemon
-    let mut daemon = start_test_daemon(config_path).await;
-
-    // Wait for daemon to start
-    sleep(Duration::from_secs(3)).await;
-
-    let client = Client::new();
+    let (mut daemon, client, _stdin) = start_test_daemon(config_path, TEST_PORT + 2).await;
     let base_url = format!("http://127.0.0.1:{}", TEST_PORT + 2);
 
     // Send queries continuously for 30 seconds (reduced from 5 minutes for faster testing)
