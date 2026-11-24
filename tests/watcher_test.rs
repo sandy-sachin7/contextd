@@ -87,6 +87,10 @@ where
     pred()
 }
 
+fn indexed_path_key(path: &std::path::Path) -> String {
+    daemon::normalize_path(path).to_string_lossy().into_owned()
+}
+
 fn spawn_test_daemon(
     temp_dir: &TempDir,
     watch_dir: &std::path::Path,
@@ -145,7 +149,7 @@ async fn test_rapid_file_creation_and_db_exclusion() {
     fs::write(watch_dir.join("private.pem"), "-----BEGIN PRIVATE KEY-----").unwrap();
     fs::write(watch_dir.join("blob.dat"), b"bin\x00data\x00here").unwrap();
 
-    let ok = wait_until(Duration::from_secs(20), || {
+    let ok = wait_until(Duration::from_secs(8), || {
         db.get_stats().unwrap().file_count == 25
     })
     .await;
@@ -188,7 +192,7 @@ async fn test_nested_directory_creation() {
         .unwrap();
     }
 
-    let ok = wait_until(Duration::from_secs(20), || {
+    let ok = wait_until(Duration::from_secs(8), || {
         db.get_stats().unwrap().file_count == 5
     })
     .await;
@@ -217,7 +221,7 @@ async fn test_file_rename_prunes_old_and_indexes_new() {
     }
 
     assert!(
-        wait_until(Duration::from_secs(20), || {
+        wait_until(Duration::from_secs(6), || {
             db.get_stats().unwrap().file_count == 5
         })
         .await
@@ -231,7 +235,7 @@ async fn test_file_rename_prunes_old_and_indexes_new() {
         .unwrap();
     }
 
-    let ok = wait_until(Duration::from_secs(20), || {
+    let ok = wait_until(Duration::from_secs(8), || {
         let paths = db.list_indexed_paths().unwrap();
         paths.len() == 5
             && paths.iter().all(|p| p.contains("renamed_"))
@@ -269,7 +273,7 @@ async fn test_directory_delete_prunes_all_indexed_children() {
     }
 
     assert!(
-        wait_until(Duration::from_secs(20), || {
+        wait_until(Duration::from_secs(6), || {
             db.get_stats().unwrap().file_count == 5
         })
         .await
@@ -277,7 +281,7 @@ async fn test_directory_delete_prunes_all_indexed_children() {
 
     fs::remove_dir_all(&subdir).unwrap();
 
-    let ok = wait_until(Duration::from_secs(20), || {
+    let ok = wait_until(Duration::from_secs(8), || {
         let stats = db.get_stats().unwrap();
         stats.file_count == 0 && stats.chunk_count == 0
     })
@@ -319,7 +323,7 @@ async fn test_untrusted_workspace_plugins_are_not_executed() {
     });
 
     assert!(
-        wait_until(Duration::from_secs(20), || {
+        wait_until(Duration::from_secs(6), || {
             db.get_stats().unwrap().file_count == 1
         })
         .await
@@ -349,9 +353,9 @@ async fn test_symlinked_file_outside_watch_root_is_not_indexed() {
     let db_path = temp_dir.path().join("symlink.db");
     let (db, first_handle) = spawn_test_daemon(&temp_dir, &outside_dir, &db_path, |_| {});
     assert!(
-        wait_until(Duration::from_secs(20), || {
+        wait_until(Duration::from_secs(6), || {
             db.list_indexed_paths()
-                .map(|paths| paths.contains(&outside_file.to_string_lossy().to_string()))
+                .map(|paths| paths.contains(&indexed_path_key(&outside_file)))
                 .unwrap_or(false)
         })
         .await
@@ -405,16 +409,12 @@ async fn test_replacing_indexed_file_with_outside_symlink_prunes_old_path() {
     let outside_file = outside_dir.join("outside.rs");
     fs::write(&file_path, "fn indexed_before_symlink() {}").unwrap();
     fs::write(&outside_file, "fn outside_symlink_target() {}").unwrap();
-    let path_key = file_path
-        .canonicalize()
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
+    let path_key = indexed_path_key(&file_path);
 
     let db_path = temp_dir.path().join("symlink_replacement.db");
     let (db, handle) = spawn_test_daemon(&temp_dir, &watch_dir, &db_path, |_| {});
     assert!(
-        wait_until(Duration::from_secs(20), || {
+        wait_until(Duration::from_secs(6), || {
             db.list_indexed_paths()
                 .map(|paths| paths.contains(&path_key))
                 .unwrap_or(false)
@@ -424,7 +424,7 @@ async fn test_replacing_indexed_file_with_outside_symlink_prunes_old_path() {
 
     fs::remove_file(&file_path).unwrap();
     symlink(&outside_file, &file_path).unwrap();
-    let pruned = wait_until(Duration::from_secs(20), || {
+    let pruned = wait_until(Duration::from_secs(6), || {
         db.list_indexed_paths()
             .map(|paths| !paths.contains(&path_key))
             .unwrap_or(false)
@@ -488,14 +488,10 @@ async fn test_inflight_index_is_pruned_after_symlink_replacement() {
         spawn_test_daemon_with_embedder(&temp_dir, &watch_dir, &db_path, embedder, |_| {});
     sleep(Duration::from_millis(300)).await;
     fs::write(&file_path, "fn old_indexed_content() {}").unwrap();
-    let path_key = file_path
-        .canonicalize()
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
+    let path_key = indexed_path_key(&file_path);
 
     let indexing_started = tokio::task::spawn_blocking(move || {
-        started_rx.recv_timeout(Duration::from_secs(20)).is_ok()
+        started_rx.recv_timeout(Duration::from_secs(6)).is_ok()
     })
     .await
     .unwrap();
@@ -510,13 +506,13 @@ async fn test_inflight_index_is_pruned_after_symlink_replacement() {
     release_tx.send(()).unwrap();
 
     let embedding_completed = tokio::task::spawn_blocking(move || {
-        completed_rx.recv_timeout(Duration::from_secs(20)).is_ok()
+        completed_rx.recv_timeout(Duration::from_secs(6)).is_ok()
     })
     .await
     .unwrap();
     assert!(embedding_completed, "Blocked embedding did not resume");
 
-    let settled = wait_until(Duration::from_secs(20), || {
+    let settled = wait_until(Duration::from_secs(6), || {
         db.list_indexed_paths()
             .map(|paths| !paths.contains(&path_key))
             .unwrap_or(false)
@@ -555,10 +551,7 @@ async fn test_changed_unindexable_file_prunes_old_chunks() {
     fs::create_dir(&watch_dir).unwrap();
     let db_path = temp_dir.path().join("unindexable.db");
     let file_path = watch_dir.join("changing.rs");
-    let path_key = file_path
-        .canonicalize()
-        .unwrap_or_else(|_| file_path.clone());
-    let path_key = path_key.to_string_lossy().to_string();
+    let path_key = indexed_path_key(&file_path);
 
     let (db, handle) = spawn_test_daemon(&temp_dir, &watch_dir, &db_path, |cfg| {
         cfg.watch.max_file_size = 128;
@@ -568,7 +561,7 @@ async fn test_changed_unindexable_file_prunes_old_chunks() {
     let valid = b"pub fn changing_file() { let marker = 7; }";
     fs::write(&file_path, valid).unwrap();
     assert!(
-        wait_until(Duration::from_secs(20), || {
+        wait_until(Duration::from_secs(6), || {
             db.list_indexed_paths()
                 .map(|paths| paths.contains(&path_key))
                 .unwrap_or(false)
@@ -578,7 +571,7 @@ async fn test_changed_unindexable_file_prunes_old_chunks() {
 
     fs::write(&file_path, b"binary\0content").unwrap();
     assert!(
-        wait_until(Duration::from_secs(20), || {
+        wait_until(Duration::from_secs(6), || {
             db.list_indexed_paths()
                 .map(|paths| !paths.contains(&path_key))
                 .unwrap_or(false)
@@ -588,7 +581,7 @@ async fn test_changed_unindexable_file_prunes_old_chunks() {
 
     fs::write(&file_path, valid).unwrap();
     assert!(
-        wait_until(Duration::from_secs(20), || {
+        wait_until(Duration::from_secs(6), || {
             db.list_indexed_paths()
                 .map(|paths| paths.contains(&path_key))
                 .unwrap_or(false)
@@ -598,7 +591,7 @@ async fn test_changed_unindexable_file_prunes_old_chunks() {
 
     fs::write(&file_path, vec![b'x'; 129]).unwrap();
     assert!(
-        wait_until(Duration::from_secs(20), || {
+        wait_until(Duration::from_secs(6), || {
             db.list_indexed_paths()
                 .map(|paths| !paths.contains(&path_key))
                 .unwrap_or(false)
@@ -608,7 +601,7 @@ async fn test_changed_unindexable_file_prunes_old_chunks() {
 
     fs::write(&file_path, valid).unwrap();
     assert!(
-        wait_until(Duration::from_secs(20), || {
+        wait_until(Duration::from_secs(6), || {
             db.list_indexed_paths()
                 .map(|paths| paths.contains(&path_key))
                 .unwrap_or(false)
@@ -617,7 +610,7 @@ async fn test_changed_unindexable_file_prunes_old_chunks() {
     );
 
     fs::write(&file_path, [b"invalid utf8 ".as_slice(), &[0xff]].concat()).unwrap();
-    let cleared = wait_until(Duration::from_secs(20), || {
+    let cleared = wait_until(Duration::from_secs(6), || {
         db.list_indexed_paths()
             .map(|paths| !paths.contains(&path_key))
             .unwrap_or(false)
@@ -638,10 +631,7 @@ async fn test_parser_failure_prunes_stale_chunks() {
     fs::create_dir(&watch_dir).unwrap();
     let db_path = temp_dir.path().join("parser_failure.db");
     let file_path = watch_dir.join("note.custom");
-    let path_key = file_path
-        .canonicalize()
-        .unwrap_or_else(|_| file_path.clone());
-    let path_key = path_key.to_string_lossy().to_string();
+    let path_key = indexed_path_key(&file_path);
 
     let (db, handle) = spawn_test_daemon(&temp_dir, &watch_dir, &db_path, |cfg| {
         cfg.plugins.insert(
@@ -657,7 +647,7 @@ async fn test_parser_failure_prunes_stale_chunks() {
 
     fs::write(&file_path, "healthy parser content").unwrap();
     assert!(
-        wait_until(Duration::from_secs(20), || {
+        wait_until(Duration::from_secs(6), || {
             db.list_indexed_paths()
                 .map(|paths| paths.contains(&path_key))
                 .unwrap_or(false)
@@ -666,7 +656,7 @@ async fn test_parser_failure_prunes_stale_chunks() {
     );
 
     fs::write(&file_path, "reject parser content").unwrap();
-    let cleared = wait_until(Duration::from_secs(20), || {
+    let cleared = wait_until(Duration::from_secs(6), || {
         db.list_indexed_paths()
             .map(|paths| !paths.contains(&path_key))
             .unwrap_or(false)
@@ -696,7 +686,7 @@ async fn test_permission_changes() {
     fs::write(&file_path, "pub fn version_one() {}").unwrap();
 
     assert!(
-        wait_until(Duration::from_secs(20), || {
+        wait_until(Duration::from_secs(6), || {
             db.get_stats().unwrap().file_count == 1
         })
         .await
@@ -714,7 +704,7 @@ async fn test_permission_changes() {
     fs::set_permissions(&file_path, perms).unwrap();
     fs::write(&file_path, "pub fn version_two_updated() {}").unwrap();
 
-    let ok = wait_until(Duration::from_secs(20), || {
+    let ok = wait_until(Duration::from_secs(8), || {
         let emb = MockEmbedder.embed("version_two_updated").unwrap();
         let hits = db
             .search_chunks_hybrid("version_two_updated", &emb, &Default::default())
