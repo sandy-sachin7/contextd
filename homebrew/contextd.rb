@@ -1,6 +1,5 @@
-# Homebrew formula for contextd
-# Install from source: brew install --build-from-source ./homebrew/contextd.rb
-# Or via tap: brew install sandy-sachin7/tap/contextd
+# Homebrew formula for contextd (HEAD-only; builds from source)
+# Install from source: brew install --HEAD --build-from-source ./homebrew/contextd.rb
 
 class Contextd < Formula
   desc "A local-first semantic context daemon for AI agents"

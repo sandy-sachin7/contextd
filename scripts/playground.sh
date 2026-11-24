@@ -85,7 +85,7 @@ ensure_binary() {
   warn "contextd not found — downloading latest release (${asset})..."
   cmd "curl -fsSL $url"
 
-  TMPDIR_WORK="$(mktemp -d)"
+  TMPDIR_WORK="${TMPDIR_WORK:-$(mktemp -d)}"
   curl -fsSL "$url" -o "$TMPDIR_WORK/$asset"
   curl -fsSL "$sums_url" -o "$TMPDIR_WORK/SHA256SUMS.txt"
 
@@ -123,25 +123,25 @@ index_workspace() {
   echo "  contextd will watch files in: ${workspace}"
   echo
 
+  export CONTEXTD_HOST="127.0.0.1"
+  export CONTEXTD_PORT="3031"
+  export CONTEXTD_DB_PATH="${TMPDIR_WORK}/contextd.db"
+  export CONTEXTD_MODEL_PATH="${TMPDIR_WORK}/models"
+  export CONTEXTD_MODEL_TYPE="all-minilm-l6-v2"
+
+  local escaped_workspace
+  escaped_workspace="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$workspace")"
+
   cat > "$config_file" <<-EOF
-[server]
-host = "127.0.0.1"
-port = 3031
-
-[storage]
-db_path = "contextd-playground.db"
-model_path = "models"
-model_type = "all-minilm-l6-v2"
-
 [watch]
-paths = ["${workspace}"]
+paths = [${escaped_workspace}]
 debounce_ms = 500
 EOF
 
   init_model "$config_file"
 
   info "Starting daemon (indexing in background)..."
-  cmd "$BINARY --config $config_file daemon &"
+  cmd "CONTEXTD_PORT=${CONTEXTD_PORT} CONTEXTD_DB_PATH=${CONTEXTD_DB_PATH} CONTEXTD_MODEL_PATH=${CONTEXTD_MODEL_PATH} $BINARY --config $config_file daemon &"
   "$BINARY" --config "$config_file" daemon &
   DAEMON_PID=$!
 
@@ -198,7 +198,8 @@ run_search() {
 main() {
   local query="${1:-}"
   local workspace="${2:-.}"
-  local config_file="contextd-playground.toml"
+  TMPDIR_WORK="$(mktemp -d)"
+  local config_file="${TMPDIR_WORK}/contextd-playground.toml"
 
   echo
   echo -e "${BOLD}╔══════════════════════════════════════╗${NC}"

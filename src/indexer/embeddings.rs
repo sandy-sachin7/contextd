@@ -402,7 +402,7 @@ fn l2_normalize(vec: &mut [f32]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     #[test]
     fn test_embedder_creation_fails_without_model() {
@@ -452,14 +452,15 @@ mod tests {
     #[test]
     #[ignore] // Requires model files on disk
     fn test_embedder_inference() {
-        let model_dir = "models/all-minilm-l6-v2";
-        if !Path::new(model_dir).exists() {
+        let model_root = PathBuf::from("models");
+        let model_type = "all-minilm-l6-v2";
+        if !crate::download::model_files_exist(&model_root, model_type) {
             return;
         }
         let config = StorageConfig {
             db_path: PathBuf::from("test.db"),
-            model_path: PathBuf::from(model_dir),
-            model_type: "all-minilm-l6-v2".to_string(),
+            model_path: model_root,
+            model_type: model_type.to_string(),
         };
         let embedder = Embedder::new(&config).expect("Failed to create embedder");
         let vec = embedder.embed("hello world").expect("Failed to embed");

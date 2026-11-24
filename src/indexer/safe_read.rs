@@ -66,7 +66,10 @@ fn open_beneath(root: &Path, relative: &Path) -> Result<File> {
     let mut directory = unsafe { OwnedFd::from_raw_fd(root_fd) };
 
     let components: Vec<_> = relative.components().collect();
-    for component in &components[..components.len() - 1] {
+    let Some((last, parents)) = components.split_last() else {
+        bail!("relative path has no components");
+    };
+    for component in parents {
         let Component::Normal(name) = component else {
             bail!("invalid path component beneath watch root");
         };
@@ -77,7 +80,7 @@ fn open_beneath(root: &Path, relative: &Path) -> Result<File> {
         )?;
     }
 
-    let Component::Normal(name) = components.last().expect("relative path has components") else {
+    let Component::Normal(name) = last else {
         bail!("invalid final path component");
     };
     let file_fd = open_at(

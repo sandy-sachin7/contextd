@@ -21,17 +21,16 @@ pub fn chunk_by_type_with_limits(
     max_chars: usize,
     overlap: usize,
 ) -> Result<Vec<Chunk>> {
-    let raw = match ext.to_lowercase().as_str() {
-        "rs" => chunk_rust(content)?,
-        "py" => chunk_python(content)?,
-        "js" | "jsx" | "mjs" | "cjs" => chunk_javascript(content)?,
-        "ts" | "mts" | "cts" => chunk_typescript(content)?,
-        "tsx" => chunk_tsx(content)?,
-        "go" => chunk_go(content)?,
-        "md" | "markdown" => chunk_markdown(content)?,
-        _ => chunk_text(content)?,
-    };
-    Ok(enforce_chunk_budget(raw, max_chars, overlap))
+    match ext.to_lowercase().as_str() {
+        "rs" => chunk_rust_with_limits(content, max_chars, overlap),
+        "py" => chunk_python_with_limits(content, max_chars, overlap),
+        "js" | "jsx" | "mjs" | "cjs" => chunk_javascript_with_limits(content, max_chars, overlap),
+        "ts" | "mts" | "cts" => chunk_typescript_with_limits(content, max_chars, overlap),
+        "tsx" => chunk_tsx_with_limits(content, max_chars, overlap),
+        "go" => chunk_go_with_limits(content, max_chars, overlap),
+        "md" | "markdown" => chunk_markdown_with_limits(content, max_chars, overlap),
+        _ => chunk_text_with_limits(content, max_chars, overlap),
+    }
 }
 
 /// Split any chunk exceeding `max_chars` into UTF-8-safe overlapping windows,
@@ -102,6 +101,14 @@ pub fn enforce_chunk_budget(chunks: Vec<Chunk>, max_chars: usize, overlap: usize
 }
 
 pub fn chunk_rust(content: &str) -> Result<Vec<Chunk>> {
+    chunk_rust_with_limits(content, DEFAULT_MAX_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP)
+}
+
+pub fn chunk_rust_with_limits(
+    content: &str,
+    max_chars: usize,
+    overlap: usize,
+) -> Result<Vec<Chunk>> {
     let mut parser = Parser::new();
     let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
     parser.set_language(&language)?;
@@ -156,18 +163,22 @@ pub fn chunk_rust(content: &str) -> Result<Vec<Chunk>> {
     }
 
     if chunks.is_empty() && !content.trim().is_empty() {
-        return chunk_text(content);
+        return chunk_text_with_limits(content, max_chars, overlap);
     }
 
-    Ok(enforce_chunk_budget(
-        chunks,
-        DEFAULT_MAX_CHUNK_CHARS,
-        DEFAULT_CHUNK_OVERLAP,
-    ))
+    Ok(enforce_chunk_budget(chunks, max_chars, overlap))
 }
 
 /// Semantic chunking for Python using Tree-sitter
 pub fn chunk_python(content: &str) -> Result<Vec<Chunk>> {
+    chunk_python_with_limits(content, DEFAULT_MAX_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP)
+}
+
+pub fn chunk_python_with_limits(
+    content: &str,
+    max_chars: usize,
+    overlap: usize,
+) -> Result<Vec<Chunk>> {
     let mut parser = Parser::new();
     let language: tree_sitter::Language = tree_sitter_python::LANGUAGE.into();
     parser.set_language(&language)?;
@@ -195,18 +206,22 @@ pub fn chunk_python(content: &str) -> Result<Vec<Chunk>> {
     }
 
     if chunks.is_empty() && !content.trim().is_empty() {
-        return chunk_text(content);
+        return chunk_text_with_limits(content, max_chars, overlap);
     }
 
-    Ok(enforce_chunk_budget(
-        chunks,
-        DEFAULT_MAX_CHUNK_CHARS,
-        DEFAULT_CHUNK_OVERLAP,
-    ))
+    Ok(enforce_chunk_budget(chunks, max_chars, overlap))
 }
 
 /// Semantic chunking for JavaScript/JSX using Tree-sitter
 pub fn chunk_javascript(content: &str) -> Result<Vec<Chunk>> {
+    chunk_javascript_with_limits(content, DEFAULT_MAX_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP)
+}
+
+pub fn chunk_javascript_with_limits(
+    content: &str,
+    max_chars: usize,
+    overlap: usize,
+) -> Result<Vec<Chunk>> {
     let mut parser = Parser::new();
     let language: tree_sitter::Language = tree_sitter_javascript::LANGUAGE.into();
     parser.set_language(&language)?;
@@ -242,17 +257,18 @@ pub fn chunk_javascript(content: &str) -> Result<Vec<Chunk>> {
     }
 
     if chunks.is_empty() && !content.trim().is_empty() {
-        return chunk_text(content);
+        return chunk_text_with_limits(content, max_chars, overlap);
     }
 
-    Ok(enforce_chunk_budget(
-        chunks,
-        DEFAULT_MAX_CHUNK_CHARS,
-        DEFAULT_CHUNK_OVERLAP,
-    ))
+    Ok(enforce_chunk_budget(chunks, max_chars, overlap))
 }
 
-fn chunk_ts_with_language(content: &str, language: tree_sitter::Language) -> Result<Vec<Chunk>> {
+fn chunk_ts_with_language(
+    content: &str,
+    language: tree_sitter::Language,
+    max_chars: usize,
+    overlap: usize,
+) -> Result<Vec<Chunk>> {
     let mut parser = Parser::new();
     parser.set_language(&language)?;
 
@@ -285,28 +301,54 @@ fn chunk_ts_with_language(content: &str, language: tree_sitter::Language) -> Res
     }
 
     if chunks.is_empty() && !content.trim().is_empty() {
-        return chunk_text(content);
+        return chunk_text_with_limits(content, max_chars, overlap);
     }
 
-    Ok(enforce_chunk_budget(
-        chunks,
-        DEFAULT_MAX_CHUNK_CHARS,
-        DEFAULT_CHUNK_OVERLAP,
-    ))
+    Ok(enforce_chunk_budget(chunks, max_chars, overlap))
 }
 
 /// Semantic chunking for TypeScript using Tree-sitter
 pub fn chunk_typescript(content: &str) -> Result<Vec<Chunk>> {
-    chunk_ts_with_language(content, tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+    chunk_typescript_with_limits(content, DEFAULT_MAX_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP)
+}
+
+pub fn chunk_typescript_with_limits(
+    content: &str,
+    max_chars: usize,
+    overlap: usize,
+) -> Result<Vec<Chunk>> {
+    chunk_ts_with_language(
+        content,
+        tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        max_chars,
+        overlap,
+    )
 }
 
 /// Semantic chunking for TSX (TypeScript + JSX) using Tree-sitter
 pub fn chunk_tsx(content: &str) -> Result<Vec<Chunk>> {
-    chunk_ts_with_language(content, tree_sitter_typescript::LANGUAGE_TSX.into())
+    chunk_tsx_with_limits(content, DEFAULT_MAX_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP)
+}
+
+pub fn chunk_tsx_with_limits(
+    content: &str,
+    max_chars: usize,
+    overlap: usize,
+) -> Result<Vec<Chunk>> {
+    chunk_ts_with_language(
+        content,
+        tree_sitter_typescript::LANGUAGE_TSX.into(),
+        max_chars,
+        overlap,
+    )
 }
 
 /// Semantic chunking for Go using Tree-sitter
 pub fn chunk_go(content: &str) -> Result<Vec<Chunk>> {
+    chunk_go_with_limits(content, DEFAULT_MAX_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP)
+}
+
+pub fn chunk_go_with_limits(content: &str, max_chars: usize, overlap: usize) -> Result<Vec<Chunk>> {
     let mut parser = Parser::new();
     let language: tree_sitter::Language = tree_sitter_go::LANGUAGE.into();
     parser.set_language(&language)?;
@@ -338,14 +380,10 @@ pub fn chunk_go(content: &str) -> Result<Vec<Chunk>> {
     }
 
     if chunks.is_empty() && !content.trim().is_empty() {
-        return chunk_text(content);
+        return chunk_text_with_limits(content, max_chars, overlap);
     }
 
-    Ok(enforce_chunk_budget(
-        chunks,
-        DEFAULT_MAX_CHUNK_CHARS,
-        DEFAULT_CHUNK_OVERLAP,
-    ))
+    Ok(enforce_chunk_budget(chunks, max_chars, overlap))
 }
 
 fn parse_fence_marker(trimmed: &str) -> Option<(char, usize)> {
@@ -377,6 +415,14 @@ fn parse_atx_header(line: &str) -> Option<(usize, &str)> {
 }
 
 pub fn chunk_markdown(content: &str) -> Result<Vec<Chunk>> {
+    chunk_markdown_with_limits(content, DEFAULT_MAX_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP)
+}
+
+pub fn chunk_markdown_with_limits(
+    content: &str,
+    max_chars: usize,
+    overlap: usize,
+) -> Result<Vec<Chunk>> {
     let mut chunks = Vec::new();
     let mut current_chunk_start: usize = 0;
     let mut current_chunk_end: usize = 0;
@@ -457,17 +503,21 @@ pub fn chunk_markdown(content: &str) -> Result<Vec<Chunk>> {
     }
 
     if chunks.is_empty() && !content.trim().is_empty() {
-        return chunk_text(content);
+        return chunk_text_with_limits(content, max_chars, overlap);
     }
 
-    Ok(enforce_chunk_budget(
-        chunks,
-        DEFAULT_MAX_CHUNK_CHARS,
-        DEFAULT_CHUNK_OVERLAP,
-    ))
+    Ok(enforce_chunk_budget(chunks, max_chars, overlap))
 }
 
 pub fn chunk_text(content: &str) -> Result<Vec<Chunk>> {
+    chunk_text_with_limits(content, DEFAULT_MAX_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP)
+}
+
+pub fn chunk_text_with_limits(
+    content: &str,
+    max_chars: usize,
+    overlap: usize,
+) -> Result<Vec<Chunk>> {
     let mut chunks = Vec::new();
     let mut start = 0usize;
 
@@ -484,19 +534,32 @@ pub fn chunk_text(content: &str) -> Result<Vec<Chunk>> {
         start += len + 2;
     }
 
-    Ok(enforce_chunk_budget(
-        chunks,
-        DEFAULT_MAX_CHUNK_CHARS,
-        DEFAULT_CHUNK_OVERLAP,
-    ))
+    Ok(enforce_chunk_budget(chunks, max_chars, overlap))
 }
 
 pub fn chunk_pdf(path: &std::path::Path) -> Result<Vec<Chunk>> {
+    chunk_pdf_with_limits(path, DEFAULT_MAX_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP)
+}
+
+pub fn chunk_pdf_with_limits(
+    path: &std::path::Path,
+    max_chars: usize,
+    overlap: usize,
+) -> Result<Vec<Chunk>> {
     let bytes = std::fs::read(path)?;
-    chunk_pdf_bytes(&bytes, path)
+    chunk_pdf_bytes_with_limits(&bytes, path, max_chars, overlap)
 }
 
 pub fn chunk_pdf_bytes(bytes: &[u8], path: &std::path::Path) -> Result<Vec<Chunk>> {
+    chunk_pdf_bytes_with_limits(bytes, path, DEFAULT_MAX_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP)
+}
+
+pub fn chunk_pdf_bytes_with_limits(
+    bytes: &[u8],
+    path: &std::path::Path,
+    max_chars: usize,
+    overlap: usize,
+) -> Result<Vec<Chunk>> {
     let extracted = catch_unwind(AssertUnwindSafe(|| {
         pdf_extract::extract_text_from_mem(bytes)
     }))
@@ -520,11 +583,7 @@ pub fn chunk_pdf_bytes(bytes: &[u8], path: &std::path::Path) -> Result<Vec<Chunk
         start += len + 2;
     }
 
-    Ok(enforce_chunk_budget(
-        chunks,
-        DEFAULT_MAX_CHUNK_CHARS,
-        DEFAULT_CHUNK_OVERLAP,
-    ))
+    Ok(enforce_chunk_budget(chunks, max_chars, overlap))
 }
 
 #[cfg(test)]
@@ -714,5 +773,28 @@ func (p Person) Greet() string {
         assert!(chunks.len() >= 2);
         assert!(chunks.iter().any(|c| c.content.contains("func hello")));
         assert!(chunks.iter().any(|c| c.content.contains("type Person")));
+    }
+
+    #[test]
+    fn test_custom_max_chunk_size_above_default_is_not_clamped() {
+        // ~2,500-char Rust function (> DEFAULT_MAX_CHUNK_CHARS = 1500, < 4000)
+        let body = "    let value = compute_step(42);\n".repeat(72); // ~2,448 chars
+        let content = format!("pub fn medium_sized_function() {{\n{}}}\n", body);
+        assert!(content.chars().count() > DEFAULT_MAX_CHUNK_CHARS);
+        assert!(content.chars().count() < 4000);
+
+        let chunks = chunk_by_type_with_limits(&content, "rs", 4000, 200).unwrap();
+        assert_eq!(
+            chunks.len(),
+            1,
+            "2,500-char Rust function must stay a single chunk when max_chars=4000"
+        );
+        assert!(chunks[0].content.contains("pub fn medium_sized_function"));
+
+        // Also verify fallback / other languages honor max_chars > 1500
+        let md_body = "This is a documentation line.\n".repeat(80); // ~2,400 chars
+        let md = format!("# Section\n{}", md_body);
+        let md_chunks = chunk_by_type_with_limits(&md, "md", 4000, 200).unwrap();
+        assert_eq!(md_chunks.len(), 1);
     }
 }

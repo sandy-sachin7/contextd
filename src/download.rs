@@ -77,18 +77,39 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
-/// Download a file atomically via a `.part` temp file, verifying HTTP status and optional SHA-256.
+/// Download a file atomically via a collision-free temp file, verifying HTTP status and optional SHA-256.
 pub async fn download_file(url: &str, path: &Path, expected_sha256: Option<&str>) -> Result<()> {
     if path.exists() {
-        println!("File {:?} already exists, skipping.", path);
-        return Ok(());
-    }
-
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
+        if let Some(expected) = expected_sha256 {
+            let check_path = path.to_path_buf();
+            let expected_owned = expected.to_string();
+            let valid =
+                tokio::task::spawn_blocking(move || sha256_matches(&check_path, &expected_owned))
+                    .await??;
+            if valid {
+                println!(
+                    "File {:?} already exists and passed SHA-256 verification, skipping.",
+                    path
+                );
+                return Ok(());
+            }
+            eprintln!(
+                "Existing file {:?} failed SHA-256 verification; re-downloading...",
+                path
+            );
+        } else {
+            println!("File {:?} already exists, skipping.", path);
+            return Ok(());
         }
     }
+
+    let parent_dir = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => {
+            fs::create_dir_all(parent)?;
+            parent.to_path_buf()
+        }
+        _ => PathBuf::from("."),
+    };
 
     println!("Downloading {}...", url);
 
@@ -112,29 +133,30 @@ pub async fn download_file(url: &str, path: &Path, expected_sha256: Option<&str>
             .progress_chars("#>-"),
     );
 
-    let part_name = format!(
-        "{}.part.{}",
+    let prefix = format!(
+        ".{}.part.",
         path.file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("download"),
-        std::process::id()
+            .unwrap_or("download")
     );
-    let part_path = path.with_file_name(part_name);
+    let mut temp_file = tempfile::Builder::new()
+        .prefix(&prefix)
+        .suffix(".tmp")
+        .tempfile_in(&parent_dir)
+        .with_context(|| format!("Failed to create temp download file in {:?}", parent_dir))?;
 
     let download_res: Result<String> = async {
-        let mut file = File::create(&part_path)
-            .with_context(|| format!("Failed to create temp download file {:?}", part_path))?;
         let mut hasher = Sha256::new();
         let mut stream = res.bytes_stream();
 
         while let Some(item) = stream.next().await {
             let chunk = item.with_context(|| format!("Stream error downloading {}", url))?;
-            file.write_all(&chunk)?;
+            temp_file.write_all(&chunk)?;
             hasher.update(&chunk);
             pb.inc(chunk.len() as u64);
         }
 
-        file.sync_all()?;
+        temp_file.as_file().sync_all()?;
         Ok(hex_encode(&hasher.finalize()))
     }
     .await;
@@ -142,7 +164,7 @@ pub async fn download_file(url: &str, path: &Path, expected_sha256: Option<&str>
     let actual_sha256 = match download_res {
         Ok(digest) => digest,
         Err(err) => {
-            let _ = fs::remove_file(&part_path);
+            drop(temp_file);
             pb.abandon_with_message("Download failed");
             return Err(err);
         }
@@ -150,7 +172,7 @@ pub async fn download_file(url: &str, path: &Path, expected_sha256: Option<&str>
 
     if let Some(expected) = expected_sha256 {
         if !actual_sha256.eq_ignore_ascii_case(expected) {
-            let _ = fs::remove_file(&part_path);
+            drop(temp_file);
             pb.abandon_with_message("Checksum mismatch");
             return Err(anyhow!(
                 "SHA-256 mismatch for {}: expected {}, got {}",
@@ -161,8 +183,10 @@ pub async fn download_file(url: &str, path: &Path, expected_sha256: Option<&str>
         }
     }
 
-    fs::rename(&part_path, path)
-        .with_context(|| format!("Failed to atomically move {:?} to {:?}", part_path, path))?;
+    temp_file
+        .persist(path)
+        .map_err(|err| err.error)
+        .with_context(|| format!("Failed to atomically move temp file to {:?}", path))?;
 
     pb.finish_with_message("Download complete");
     Ok(())
@@ -307,7 +331,14 @@ pub fn migrate_legacy_model_cache(model_root: &Path, model_type: &str) -> Result
 
 pub async fn ensure_model_files(model_root: &Path, model_type: &str) -> Result<bool> {
     let manifest = lookup_manifest(model_type)?;
-    let model_dir = model_cache_dir(model_root, model_type);
+    ensure_model_files_with_manifest(model_root, &manifest).await
+}
+
+pub async fn ensure_model_files_with_manifest(
+    model_root: &Path,
+    manifest: &ModelDownloadManifest,
+) -> Result<bool> {
+    let model_dir = model_cache_dir(model_root, manifest.model_type);
 
     if !model_dir.exists() {
         fs::create_dir_all(&model_dir)?;
@@ -316,20 +347,35 @@ pub async fn ensure_model_files(model_root: &Path, model_type: &str) -> Result<b
     let model_path = model_dir.join("model.onnx");
     let tokenizer_path = model_dir.join("tokenizer.json");
 
-    migrate_legacy_cache(model_root, &model_dir, &manifest)?;
+    migrate_legacy_cache(model_root, &model_dir, manifest)?;
 
-    if model_path.exists() && tokenizer_path.exists() {
+    let check_model = model_path.clone();
+    let check_tokenizer = tokenizer_path.clone();
+    let model_sha = manifest.model_sha256.to_string();
+    let tokenizer_sha = manifest.tokenizer_sha256.to_string();
+    let (model_valid, tokenizer_valid) =
+        tokio::task::spawn_blocking(move || -> Result<(bool, bool)> {
+            let m_ok = sha256_matches(&check_model, &model_sha)?;
+            let t_ok = sha256_matches(&check_tokenizer, &tokenizer_sha)?;
+            Ok((m_ok, t_ok))
+        })
+        .await??;
+
+    if model_valid && tokenizer_valid {
         return Ok(false);
     }
 
-    println!("Model files missing. Downloading {}...", model_type);
+    println!(
+        "Model files missing or corrupted. Downloading {}...",
+        manifest.model_type
+    );
 
     let mut downloaded = false;
-    if !model_path.exists() {
+    if !model_valid {
         download_file(manifest.model_url, &model_path, Some(manifest.model_sha256)).await?;
         downloaded = true;
     }
-    if !tokenizer_path.exists() {
+    if !tokenizer_valid {
         download_file(
             manifest.tokenizer_url,
             &tokenizer_path,
@@ -492,6 +538,17 @@ mod tests {
 
         // Matching checksum succeeds atomically
         let good_dest = dir.path().join("good.bin");
+        download_file(
+            &format!("http://{}/ok", addr),
+            &good_dest,
+            Some(&expected_hex),
+        )
+        .await
+        .unwrap();
+        assert_eq!(fs::read(&good_dest).unwrap(), payload);
+
+        // Corrupted pre-existing file on disk must be detected and re-downloaded
+        fs::write(&good_dest, b"corrupted partial bytes").unwrap();
         download_file(
             &format!("http://{}/ok", addr),
             &good_dest,

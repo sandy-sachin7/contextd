@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/sandy-sachin7/contextd/main/scripts
 
 **Homebrew (macOS/Linux):**
 ```bash
-brew install --build-from-source ./homebrew/contextd.rb
+brew install --HEAD --build-from-source ./homebrew/contextd.rb
 ```
 
 **Docker:**
@@ -94,7 +94,7 @@ contextd supports **9 AI tools** out of the box:
 | **Codex** | `codex` | TOML (`[mcp_servers.contextd]`) | `codex` binary or `~/.codex/config.toml` |
 
 Each `contextd connect` run:
-1. Parses JSON/JSONC (preserving comments/trailing commas via JSON5) and TOML (preserving comments via `toml_edit`)
+1. Parses JSON/JSONC (accepting comments and trailing commas via `json5`, writing clean formatted JSON) and TOML (preserving comments via `toml_edit`)
 2. Refuses to overwrite if an existing config has syntax errors
 3. Writes a `.bak` backup and atomically replaces the target file
 

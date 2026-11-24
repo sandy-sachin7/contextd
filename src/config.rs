@@ -198,13 +198,25 @@ impl Config {
         explicit_path: Option<&Path>,
         trust_workspace_plugins: bool,
     ) -> Result<Self> {
+        Self::load_resolved_with_trust(explicit_path, false, trust_workspace_plugins)
+    }
+
+    /// Resolve config with an optional explicit `--trust-config` flag for user-invoked
+    /// `--config` files outside the user config directory.
+    pub fn load_resolved_with_trust(
+        explicit_path: Option<&Path>,
+        trust_config: bool,
+        trust_workspace_plugins: bool,
+    ) -> Result<Self> {
         let mut config = if let Some(path) = explicit_path {
             let mut cfg = Self::load(path)?;
-            // Treat an explicit path inside user config dir as trusted; otherwise workspace-local
+            // Treat an explicit path inside user config dir (or explicitly trusted) as trusted;
+            // otherwise treat it as workspace-local.
             let canonical_cfg = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
             let canonical_user_dir =
                 fs::canonicalize(default_config_dir()).unwrap_or_else(|_| default_config_dir());
-            cfg.is_workspace_config = !canonical_cfg.starts_with(&canonical_user_dir);
+            cfg.is_workspace_config =
+                !trust_config && !canonical_cfg.starts_with(&canonical_user_dir);
             cfg
         } else {
             let local = PathBuf::from("contextd.toml");
@@ -333,7 +345,10 @@ impl Config {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::sync::Mutex;
     use tempfile::NamedTempFile;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_default_config() {
@@ -414,6 +429,7 @@ db_path = "partial.db"
 
     #[test]
     fn test_workspace_config_cannot_enable_its_own_plugins() -> Result<()> {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut file = NamedTempFile::new()?;
         writeln!(file, "[security]\nallow_workspace_plugins = true\n")?;
 
@@ -433,6 +449,7 @@ db_path = "partial.db"
 
     #[test]
     fn test_workspace_config_cannot_set_server_or_storage() -> Result<()> {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut file = NamedTempFile::new()?;
         writeln!(
             file,
@@ -475,6 +492,97 @@ debounce_ms = 123
         // Workspace-scoped sections remain in effect.
         assert_eq!(config.watch.paths, vec![PathBuf::from("src")]);
         assert_eq!(config.watch.debounce_ms, 123);
+        Ok(())
+    }
+
+    #[test]
+    fn test_env_overrides_work_with_workspace_config() -> Result<()> {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        struct EnvRestore {
+            saved: Vec<(&'static str, Option<String>)>,
+        }
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                for (k, v) in &self.saved {
+                    match v {
+                        Some(val) => std::env::set_var(k, val),
+                        None => std::env::remove_var(k),
+                    }
+                }
+            }
+        }
+
+        let keys = [
+            "CONTEXTD_PORT",
+            "CONTEXTD_DB_PATH",
+            "CONTEXTD_MODEL_PATH",
+            "CONTEXTD_HOST",
+        ];
+        let _restore = EnvRestore {
+            saved: keys.iter().map(|&k| (k, std::env::var(k).ok())).collect(),
+        };
+
+        let mut file = NamedTempFile::new()?;
+        writeln!(
+            file,
+            r#"
+[server]
+host = "0.0.0.0"
+port = 9999
+
+[storage]
+db_path = "ignored-workspace.db"
+
+[watch]
+paths = ["workspace-src"]
+debounce_ms = 250
+"#
+        )?;
+
+        let dir = tempfile::tempdir()?;
+        let expected_db = dir.path().join("playground.db");
+        let expected_models = dir.path().join("models");
+
+        std::env::set_var("CONTEXTD_HOST", "127.0.0.1");
+        std::env::set_var("CONTEXTD_PORT", "3031");
+        std::env::set_var("CONTEXTD_DB_PATH", &expected_db);
+        std::env::set_var("CONTEXTD_MODEL_PATH", &expected_models);
+
+        let config = Config::load_resolved(Some(file.path()), false)?;
+        assert!(config.is_workspace_config);
+        assert_eq!(config.server.host, "127.0.0.1");
+        assert_eq!(config.server.port, 3031);
+        assert_eq!(config.storage.db_path, expected_db);
+        assert_eq!(config.storage.model_path, expected_models);
+        assert_eq!(config.watch.paths, vec![PathBuf::from("workspace-src")]);
+        assert_eq!(config.watch.debounce_ms, 250);
+        Ok(())
+    }
+
+    #[test]
+    fn test_trust_config_allows_explicit_server_and_storage() -> Result<()> {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut file = NamedTempFile::new()?;
+        writeln!(
+            file,
+            r#"
+[server]
+host = "127.0.0.1"
+port = 4040
+
+[storage]
+db_path = "custom-trusted.db"
+model_path = "custom-models"
+"#
+        )?;
+
+        let config = Config::load_resolved_with_trust(Some(file.path()), true, false)?;
+        assert!(!config.is_workspace_config);
+        assert_eq!(config.server.port, 4040);
+        assert_eq!(config.storage.db_path, PathBuf::from("custom-trusted.db"));
+        assert_eq!(config.storage.model_path, PathBuf::from("custom-models"));
+        assert!(config.plugins_allowed());
         Ok(())
     }
 }

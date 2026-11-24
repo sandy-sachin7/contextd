@@ -11,7 +11,7 @@ curl -sSL https://raw.githubusercontent.com/sandy-sachin7/contextd/main/scripts/
 ### Homebrew (macOS/Linux)
 
 ```bash
-brew install sandy-sachin7/tap/contextd
+brew install --HEAD --build-from-source ./homebrew/contextd.rb
 ```
 
 ### Docker

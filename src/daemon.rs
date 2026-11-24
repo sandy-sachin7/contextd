@@ -202,98 +202,122 @@ pub async fn run_with_components(
     pb.set_style(ProgressStyle::default_spinner().template("{spinner:.green} {msg}")?);
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
-    let ignore_checkers: Vec<IgnoreChecker> = config
-        .watch
-        .paths
-        .iter()
-        .map(|p| IgnoreChecker::new(p))
-        .collect();
+    let ignore_checkers: Arc<Vec<IgnoreChecker>> = Arc::new(
+        config
+            .watch
+            .paths
+            .iter()
+            .map(|p| IgnoreChecker::new(p))
+            .collect(),
+    );
 
     let mut seen_paths: HashSet<String> = HashSet::new();
     let mut scan_tasks: JoinSet<()> = JoinSet::new();
 
-    for root in &config.watch.paths {
-        if !root.exists() {
-            continue;
-        }
-        let walker = WalkBuilder::new(root)
-            .standard_filters(true)
-            .add_custom_ignore_filename(".contextignore")
-            .filter_entry(|entry| {
-                if entry.depth() == 0 {
-                    return true;
-                }
-                if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                    if let Some(name) = entry.file_name().to_str() {
-                        if is_default_ignored_dir_name(name) {
-                            return false;
+    // Offload synchronous WalkBuilder directory traversal to the blocking pool
+    // and stream discovered paths into the async worker loop.
+    let (scan_tx, mut scan_rx) = mpsc::channel::<PathBuf>(256);
+    let walker_roots = config.watch.paths.clone();
+    let walker_canonical_roots = canonical_watch_roots.clone();
+    let walker_excluded = excluded.clone();
+    let walker_ignore_checkers = ignore_checkers.clone();
+
+    let walker_handle = tokio::task::spawn_blocking(move || {
+        for root in &walker_roots {
+            if !root.exists() {
+                continue;
+            }
+            let walker = WalkBuilder::new(root)
+                .standard_filters(true)
+                .add_custom_ignore_filename(".contextignore")
+                .filter_entry(|entry| {
+                    if entry.depth() == 0 {
+                        return true;
+                    }
+                    if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                        if let Some(name) = entry.file_name().to_str() {
+                            if is_default_ignored_dir_name(name) {
+                                return false;
+                            }
                         }
                     }
+                    true
+                })
+                .build();
+
+            for result in walker {
+                match result {
+                    Ok(entry) => {
+                        let path = entry.path();
+                        if entry
+                            .file_type()
+                            .map(|kind| kind.is_symlink())
+                            .unwrap_or(false)
+                            || !path.is_file()
+                        {
+                            continue;
+                        }
+                        let norm_path = normalize_path(path);
+                        if !is_under_watch_root(&norm_path, &walker_canonical_roots) {
+                            continue;
+                        }
+                        if walker_excluded.matches(&norm_path)
+                            || is_default_excluded(&norm_path, false)
+                        {
+                            continue;
+                        }
+                        if walker_ignore_checkers
+                            .iter()
+                            .any(|c| c.is_ignored(&norm_path, false))
+                        {
+                            continue;
+                        }
+
+                        if scan_tx.blocking_send(norm_path).is_err() {
+                            return;
+                        }
+                    }
+                    Err(err) => eprintln!("Error during scan: {}", err),
                 }
-                true
-            })
-            .build();
-
-        for result in walker {
-            match result {
-                Ok(entry) => {
-                    let path = entry.path();
-                    if entry
-                        .file_type()
-                        .map(|kind| kind.is_symlink())
-                        .unwrap_or(false)
-                        || !path.is_file()
-                    {
-                        continue;
-                    }
-                    let norm_path = normalize_path(path);
-                    if !is_under_watch_root(&norm_path, &canonical_watch_roots) {
-                        continue;
-                    }
-                    if excluded.matches(&norm_path) || is_default_excluded(&norm_path, false) {
-                        continue;
-                    }
-                    if ignore_checkers
-                        .iter()
-                        .any(|c| c.is_ignored(&norm_path, false))
-                    {
-                        continue;
-                    }
-
-                    seen_paths.insert(norm_path.to_string_lossy().to_string());
-
-                    let Ok(permit) = semaphore.clone().acquire_owned().await else {
-                        break;
-                    };
-
-                    let config = config.clone();
-                    let db = db.clone();
-                    let embedder = embedder.clone();
-                    let pb = pb.clone();
-                    let plugin_warned = plugin_warned.clone();
-                    let watch_roots = canonical_watch_roots.clone();
-
-                    scan_tasks.spawn(async move {
-                        pb.set_message(format!(
-                            "Indexing {:?}",
-                            norm_path.file_name().unwrap_or_default()
-                        ));
-                        index_file_with_roots(
-                            norm_path,
-                            config,
-                            db,
-                            embedder,
-                            plugin_warned,
-                            watch_roots.as_ref().clone(),
-                        )
-                        .await;
-                        drop(permit);
-                        pb.inc(1);
-                    });
-                }
-                Err(err) => eprintln!("Error during scan: {}", err),
             }
         }
+    });
+
+    while let Some(norm_path) = scan_rx.recv().await {
+        seen_paths.insert(norm_path.to_string_lossy().to_string());
+
+        let Ok(permit) = semaphore.clone().acquire_owned().await else {
+            break;
+        };
+
+        let config = config.clone();
+        let db = db.clone();
+        let embedder = embedder.clone();
+        let pb = pb.clone();
+        let plugin_warned = plugin_warned.clone();
+        let watch_roots = canonical_watch_roots.clone();
+
+        scan_tasks.spawn(async move {
+            pb.set_message(format!(
+                "Indexing {:?}",
+                norm_path.file_name().unwrap_or_default()
+            ));
+            index_file_with_roots(
+                norm_path,
+                config,
+                db,
+                embedder,
+                plugin_warned,
+                watch_roots.as_ref().clone(),
+            )
+            .await;
+            drop(permit);
+            pb.inc(1);
+        });
+    }
+
+    if let Err(err) = walker_handle.await {
+        eprintln!("Initial directory walk task failed: {}", err);
     }
 
     while let Some(res) = scan_tasks.join_next().await {
@@ -410,30 +434,70 @@ pub async fn run_with_components(
                                 if let Err(e) = watcher::watch_dir_tree(&mut debouncer, &path) {
                                     eprintln!("Warning: failed watching new dir {:?}: {}", path, e);
                                 }
-                                let walker = WalkBuilder::new(&path)
-                                    .standard_filters(true)
-                                    .add_custom_ignore_filename(".contextignore")
-                                    .build();
-                                for entry in walker.flatten() {
-                                    if entry.file_type().map(|kind| kind.is_symlink()).unwrap_or(false) {
-                                        continue;
+                                let scan_dir = path.clone();
+                                let scan_roots = canonical_watch_roots.clone();
+                                let scan_excluded = excluded.clone();
+                                let scan_checkers = ignore_checkers.clone();
+                                let discovered = tokio::task::spawn_blocking(move || {
+                                    let mut files = Vec::new();
+                                    let walker = WalkBuilder::new(&scan_dir)
+                                        .standard_filters(true)
+                                        .add_custom_ignore_filename(".contextignore")
+                                        .filter_entry(|entry| {
+                                            if entry.depth() == 0 {
+                                                return true;
+                                            }
+                                            if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false)
+                                            {
+                                                if let Some(name) = entry.file_name().to_str() {
+                                                    if is_default_ignored_dir_name(name) {
+                                                        return false;
+                                                    }
+                                                }
+                                            }
+                                            true
+                                        })
+                                        .build();
+                                    for entry in walker.flatten() {
+                                        if entry
+                                            .file_type()
+                                            .map(|kind| kind.is_symlink())
+                                            .unwrap_or(false)
+                                        {
+                                            continue;
+                                        }
+                                        let p = normalize_path(entry.path());
+                                        if is_under_watch_root(&p, &scan_roots)
+                                            && p.is_file()
+                                            && !scan_excluded.matches(&p)
+                                            && !is_default_excluded(&p, false)
+                                            && !scan_checkers.iter().any(|c| c.is_ignored(&p, false))
+                                        {
+                                            files.push(p);
+                                        }
                                     }
-                                    let p = normalize_path(entry.path());
-                                    if is_under_watch_root(&p, &canonical_watch_roots)
-                                        && p.is_file()
-                                        && !excluded.matches(&p)
-                                        && !is_default_excluded(&p, false)
-                                        && !ignore_checkers.iter().any(|c| c.is_ignored(&p, false))
-                                    {
-                                        schedule_index_path(
-                                            p,
-                                            coordinator.clone(),
-                                            semaphore.clone(),
-                                            config.clone(),
-                                            db.clone(),
-                                            embedder.clone(),
-                                            plugin_warned.clone(),
-                                            canonical_watch_roots.clone(),
+                                    files
+                                })
+                                .await;
+                                match discovered {
+                                    Ok(files) => {
+                                        for p in files {
+                                            schedule_index_path(
+                                                p,
+                                                coordinator.clone(),
+                                                semaphore.clone(),
+                                                config.clone(),
+                                                db.clone(),
+                                                embedder.clone(),
+                                                plugin_warned.clone(),
+                                                canonical_watch_roots.clone(),
+                                            );
+                                        }
+                                    }
+                                    Err(err) => {
+                                        eprintln!(
+                                            "Warning: directory scan task failed for {:?}: {}",
+                                            path, err
                                         );
                                     }
                                 }
@@ -715,49 +779,52 @@ async fn index_file_with_roots(
     }
 
     // 4. Parse / chunk (with plugin trust enforcement)
-    let plugin_cmd = config.plugins.get(&ext).cloned();
-    let use_plugin = if plugin_cmd.is_some() {
-        if config.plugins_allowed() {
-            true
-        } else {
+    let active_plugin_cmd = match config.plugins.get(&ext) {
+        Some(cmd) if config.plugins_allowed() => Some(cmd.clone()),
+        Some(_) => {
             if !plugin_warned.swap(true, Ordering::Relaxed) {
                 eprintln!(
                     "Warning: ignoring [plugins] from untrusted workspace-local contextd.toml. \
                      Pass --trust-workspace-plugins or set security.allow_workspace_plugins = true in user config."
                 );
             }
-            false
+            None
         }
-    } else {
-        false
+        None => None,
     };
 
     let max_chunk_size = config.chunking.max_chunk_size;
     let overlap = config.chunking.overlap;
 
-    let chunks_result = if use_plugin {
-        let cmd = plugin_cmd.unwrap();
+    let chunks_result = if let Some(cmd) = active_plugin_cmd {
         let suffix = path
             .extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| format!(".{ext}"))
             .unwrap_or_default();
-        let snapshot = match tempfile::Builder::new().suffix(&suffix).tempfile() {
-            Ok(mut snapshot) => {
-                if let Err(error) = snapshot.write_all(&raw_bytes) {
-                    eprintln!("Failed to create parser snapshot for {:?}: {}", path, error);
-                    prune_indexed_file(&db, &path_str).await;
-                    return;
-                }
-                snapshot
-            }
-            Err(error) => {
+        let snapshot_res = tokio::task::spawn_blocking(move || -> std::io::Result<_> {
+            let mut snapshot = tempfile::Builder::new().suffix(&suffix).tempfile()?;
+            snapshot.write_all(&raw_bytes)?;
+            snapshot.flush()?;
+            Ok(snapshot)
+        })
+        .await;
+        let snapshot = match snapshot_res {
+            Ok(Ok(snapshot)) => snapshot,
+            Ok(Err(error)) => {
                 eprintln!("Failed to create parser snapshot for {:?}: {}", path, error);
                 prune_indexed_file(&db, &path_str).await;
                 return;
             }
+            Err(error) => {
+                eprintln!("Parser snapshot task failed for {:?}: {}", path, error);
+                prune_indexed_file(&db, &path_str).await;
+                return;
+            }
         };
-        match plugins::run_parser(&cmd, snapshot.path()).await {
+        let plugin_res = plugins::run_parser(&cmd, snapshot.path()).await;
+        let _ = tokio::task::spawn_blocking(move || drop(snapshot)).await;
+        match plugin_res {
             Ok(content) => {
                 let ext_clone = ext.clone();
                 match tokio::task::spawn_blocking(move || {
@@ -779,12 +846,7 @@ async fn index_file_with_roots(
     } else if ext == "pdf" {
         let pdf_path = path.clone();
         match tokio::task::spawn_blocking(move || {
-            let raw_chunks = chunker::chunk_pdf_bytes(&raw_bytes, &pdf_path)?;
-            Ok(chunker::enforce_chunk_budget(
-                raw_chunks,
-                max_chunk_size,
-                overlap,
-            ))
+            chunker::chunk_pdf_bytes_with_limits(&raw_bytes, &pdf_path, max_chunk_size, overlap)
         })
         .await
         {

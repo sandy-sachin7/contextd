@@ -18,6 +18,11 @@ struct Cli {
     #[arg(short, long, global = true)]
     config: Option<PathBuf>,
 
+    /// Explicitly trust an --config file outside the user config directory
+    /// (allows it to configure [server], [storage], and [plugins])
+    #[arg(long, global = true, default_value_t = false)]
+    trust_config: bool,
+
     /// Explicitly trust and execute [plugins] from a workspace-local contextd.toml
     #[arg(long, global = true, default_value_t = false)]
     trust_workspace_plugins: bool,
@@ -38,7 +43,11 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let config = Config::load_resolved(args.config.as_deref(), args.trust_workspace_plugins)?;
+    let config = Config::load_resolved_with_trust(
+        args.config.as_deref(),
+        args.trust_config,
+        args.trust_workspace_plugins,
+    )?;
 
     match args.command.unwrap_or(cli::Commands::Daemon {
         exit_on_stdin_eof: false,

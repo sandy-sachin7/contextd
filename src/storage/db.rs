@@ -1026,65 +1026,21 @@ impl Database {
             ));
         }
 
-        let has_filters = options.start_time.is_some()
+        const MAX_FILTERED_KNN_K: usize = 4096;
+
+        let has_file_filters = options.start_time.is_some()
             || options.end_time.is_some()
             || options.file_types.as_ref().is_some_and(|v| !v.is_empty())
-            || options.paths.as_ref().is_some_and(|v| !v.is_empty())
-            || options.min_score.is_some();
+            || options.paths.as_ref().is_some_and(|v| !v.is_empty());
+        let has_filters = has_file_filters || options.min_score.is_some();
 
-        let knn_k: usize = if has_filters {
+        let mut knn_k: usize = if has_filters {
             (limit.saturating_mul(10)).clamp(64, 512)
         } else {
             (limit.saturating_mul(3)).clamp(20, 256)
         };
 
         let query_bytes = encode_f32_le(query_embedding);
-
-        let conn = self.read_conn()?;
-
-        // Step 1: Real sqlite-vec KNN index lookup — returns ONLY (chunk_id, distance)
-        let knn_candidates: Vec<(i64, f32)> = {
-            let mut stmt = conn.prepare(
-                "SELECT chunk_id, distance
-                 FROM chunks_vec
-                 WHERE embedding MATCH ?1 AND k = ?2
-                 ORDER BY distance",
-            )?;
-            let rows = stmt
-                .query_map(params![query_bytes.as_slice(), knn_k as i64], |row| {
-                    Ok((row.get::<_, i64>(0)?, row.get::<_, f32>(1)?))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            rows
-        };
-
-        if knn_candidates.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let distance_by_id: HashMap<i64, f32> = knn_candidates.iter().copied().collect();
-
-        // Step 2: Fetch content & file metadata ONLY for the top-K candidate chunk IDs
-        let placeholders = std::iter::repeat_n("?", knn_candidates.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let mut sql = format!(
-            "SELECT c.id, c.content, f.path, f.last_modified, f.id,
-                    COALESCE(qh.hit_count, 0), c.start_offset, c.end_offset
-             FROM chunks c
-             JOIN files f ON c.file_id = f.id
-             LEFT JOIN query_hits qh ON f.id = qh.file_id
-             WHERE c.id IN ({})",
-            placeholders
-        );
-
-        let mut sql_params: Vec<Box<dyn rusqlite::ToSql>> =
-            Vec::with_capacity(knn_candidates.len() + 8);
-        for &(cid, _) in &knn_candidates {
-            sql_params.push(Box::new(cid));
-        }
-
-        append_file_filters(&mut sql, &mut sql_params, options);
 
         struct CandidateRow {
             id: i64,
@@ -1097,26 +1053,107 @@ impl Database {
             end_offset: u64,
         }
 
-        let raw_rows: Vec<CandidateRow> = {
-            let mut stmt = conn.prepare(&sql)?;
-            let params_refs: Vec<&dyn rusqlite::ToSql> =
-                sql_params.iter().map(|p| p.as_ref()).collect();
-            let rows = stmt
-                .query_map(params_refs.as_slice(), |row| {
-                    Ok(CandidateRow {
-                        id: row.get(0)?,
-                        content: row.get(1)?,
-                        file_path: row.get(2)?,
-                        last_modified: row.get::<_, i64>(3)? as u64,
-                        file_id: row.get(4)?,
-                        hit_count: row.get(5)?,
-                        start_offset: row.get::<_, i64>(6)? as u64,
-                        end_offset: row.get::<_, i64>(7)? as u64,
+        let conn = self.read_conn()?;
+        let mut distance_by_id: HashMap<i64, f32>;
+        let mut raw_rows: Vec<CandidateRow>;
+
+        // Progressive over-fetch when file/path/time filters are active: expand k
+        // up to MAX_FILTERED_KNN_K if filtered results fall short of `limit`.
+        loop {
+            // Step 1: Real sqlite-vec KNN index lookup — returns ONLY (chunk_id, distance)
+            let knn_candidates: Vec<(i64, f32)> = {
+                let mut stmt = conn.prepare(
+                    "SELECT chunk_id, distance
+                     FROM chunks_vec
+                     WHERE embedding MATCH ?1 AND k = ?2
+                     ORDER BY distance",
+                )?;
+                let rows = stmt
+                    .query_map(params![query_bytes.as_slice(), knn_k as i64], |row| {
+                        Ok((row.get::<_, i64>(0)?, row.get::<_, f32>(1)?))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                rows
+            };
+
+            if knn_candidates.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            let exhausted = knn_candidates.len() < knn_k;
+            let below_min_score_frontier = options.min_score.is_some_and(|min| {
+                knn_candidates
+                    .last()
+                    .is_some_and(|&(_, dist)| (1.0 - dist) < min)
+            });
+
+            distance_by_id = knn_candidates.iter().copied().collect();
+
+            // Step 2: Fetch content & file metadata ONLY for the top-K candidate chunk IDs
+            let placeholders = std::iter::repeat_n("?", knn_candidates.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut sql = format!(
+                "SELECT c.id, c.content, f.path, f.last_modified, f.id,
+                        COALESCE(qh.hit_count, 0), c.start_offset, c.end_offset
+                 FROM chunks c
+                 JOIN files f ON c.file_id = f.id
+                 LEFT JOIN query_hits qh ON f.id = qh.file_id
+                 WHERE c.id IN ({})",
+                placeholders
+            );
+
+            let mut sql_params: Vec<Box<dyn rusqlite::ToSql>> =
+                Vec::with_capacity(knn_candidates.len() + 8);
+            for &(cid, _) in &knn_candidates {
+                sql_params.push(Box::new(cid));
+            }
+
+            append_file_filters(&mut sql, &mut sql_params, options);
+
+            raw_rows = {
+                let mut stmt = conn.prepare(&sql)?;
+                let params_refs: Vec<&dyn rusqlite::ToSql> =
+                    sql_params.iter().map(|p| p.as_ref()).collect();
+                let rows = stmt
+                    .query_map(params_refs.as_slice(), |row| {
+                        Ok(CandidateRow {
+                            id: row.get(0)?,
+                            content: row.get(1)?,
+                            file_path: row.get(2)?,
+                            last_modified: row.get::<_, i64>(3)? as u64,
+                            file_id: row.get(4)?,
+                            hit_count: row.get(5)?,
+                            start_offset: row.get::<_, i64>(6)? as u64,
+                            end_offset: row.get::<_, i64>(7)? as u64,
+                        })
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                rows
+            };
+
+            let qualified_count = match options.min_score {
+                Some(min) => raw_rows
+                    .iter()
+                    .filter(|r| {
+                        let dist = distance_by_id.get(&r.id).copied().unwrap_or(1.0);
+                        (1.0 - dist) >= min
                     })
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            rows
-        };
+                    .count(),
+                None => raw_rows.len(),
+            };
+
+            if !has_file_filters
+                || qualified_count >= limit
+                || exhausted
+                || below_min_score_frontier
+                || knn_k >= MAX_FILTERED_KNN_K
+            {
+                break;
+            }
+
+            knn_k = knn_k.saturating_mul(4).min(MAX_FILTERED_KNN_K);
+        }
 
         drop(conn);
 
@@ -1688,5 +1725,66 @@ mod tests {
             db.check_reindex_state("/repo/missing.rs", 100, 42).unwrap(),
             ReindexCheck::NeedsIndex
         );
+    }
+
+    #[test]
+    fn test_filtered_knn_progressive_overfetch_recalls_beyond_initial_window() {
+        let db = Database::new(":memory:").unwrap();
+        let query_emb = unit_vec(384, 0);
+
+        // Insert 100 `.md` chunks that exactly match query_emb (distance 0.0),
+        // filling more than the initial knn_k=64 window for limit=3.
+        for i in 0..100 {
+            let path = format!("/docs/note_{i}.md");
+            db.index_file_chunks(
+                &path,
+                1_700_000_000,
+                1_700_000_000_000_000_000,
+                16,
+                &format!("md_hash_{i}"),
+                &[ChunkInput {
+                    start: 0,
+                    end: 16,
+                    content: "markdown filler",
+                    embedding: Some(&query_emb),
+                    metadata: None,
+                }],
+            )
+            .unwrap();
+        }
+
+        // Insert 3 `.rs` chunks with slightly lower similarity (orthogonal dim)
+        let mut rs_emb = vec![0.0_f32; 384];
+        rs_emb[0] = 0.6;
+        rs_emb[1] = 0.8;
+        for i in 0..3 {
+            let path = format!("/src/mod_{i}.rs");
+            db.index_file_chunks(
+                &path,
+                1_700_000_000,
+                1_700_000_000_000_000_000,
+                20,
+                &format!("rs_hash_{i}"),
+                &[ChunkInput {
+                    start: 0,
+                    end: 20,
+                    content: "fn rust_target() {}",
+                    embedding: Some(&rs_emb),
+                    metadata: None,
+                }],
+            )
+            .unwrap();
+        }
+
+        let options = SearchOptions {
+            limit: Some(3),
+            file_types: Some(vec!["rs".to_string()]),
+            recency_weight: Some(0.0),
+            frequency_weight: Some(0.0),
+            ..Default::default()
+        };
+        let results = db.search_chunks_enhanced(&query_emb, &options).unwrap();
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| r.file_type == "rs"));
     }
 }
