@@ -1,6 +1,9 @@
-use anyhow::Result;
+use crate::config::{DEFAULT_CHUNK_OVERLAP, DEFAULT_MAX_CHUNK_CHARS};
+use anyhow::{anyhow, Result};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use tree_sitter::Parser;
 
+#[derive(Debug, Clone)]
 pub struct Chunk {
     pub start: u64,
     pub end: u64,
@@ -9,108 +12,183 @@ pub struct Chunk {
 }
 
 pub fn chunk_by_type(content: &str, ext: &str) -> Result<Vec<Chunk>> {
-    match ext {
-        "rs" => chunk_rust(content),
-        "py" => chunk_python(content),
-        "js" | "jsx" => chunk_javascript(content),
-        "ts" | "tsx" => chunk_typescript(content),
-        "go" => chunk_go(content),
-        "md" | "markdown" => chunk_markdown(content),
-        _ => chunk_text(content),
-    }
+    chunk_by_type_with_limits(content, ext, DEFAULT_MAX_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP)
 }
 
-pub fn chunk_rust(content: &str) -> Result<Vec<Chunk>> {
-    let mut parser = Parser::new();
-    let language = tree_sitter_rust::language();
-    parser.set_language(language)?;
+pub fn chunk_by_type_with_limits(
+    content: &str,
+    ext: &str,
+    max_chars: usize,
+    overlap: usize,
+) -> Result<Vec<Chunk>> {
+    let raw = match ext.to_lowercase().as_str() {
+        "rs" => chunk_rust(content)?,
+        "py" => chunk_python(content)?,
+        "js" | "jsx" | "mjs" | "cjs" => chunk_javascript(content)?,
+        "ts" | "mts" | "cts" => chunk_typescript(content)?,
+        "tsx" => chunk_tsx(content)?,
+        "go" => chunk_go(content)?,
+        "md" | "markdown" => chunk_markdown(content)?,
+        _ => chunk_text(content)?,
+    };
+    Ok(enforce_chunk_budget(raw, max_chars, overlap))
+}
 
-    let tree = parser
-        .parse(content, None)
-        .ok_or_else(|| anyhow::anyhow!("Failed to parse Rust code"))?;
-    let root_node = tree.root_node();
-    let mut chunks = Vec::new();
-    let mut cursor = root_node.walk();
+/// Split any chunk exceeding `max_chars` into UTF-8-safe overlapping windows,
+/// preferring newline boundaries while preserving byte offsets and metadata.
+pub fn enforce_chunk_budget(chunks: Vec<Chunk>, max_chars: usize, overlap: usize) -> Vec<Chunk> {
+    let max_chars = max_chars.max(64);
+    let overlap = overlap.min(max_chars / 2);
+    let mut out = Vec::with_capacity(chunks.len());
 
-    let mut pending_comments_start: Option<usize> = None;
-
-    // Iterate over top-level nodes
-    for child in root_node.children(&mut cursor) {
-        let kind = child.kind();
-
-        if kind == "line_comment" || kind == "block_comment" {
-            if pending_comments_start.is_none() {
-                pending_comments_start = Some(child.start_byte());
+    for chunk in chunks {
+        if chunk.content.chars().count() <= max_chars {
+            if !chunk.content.trim().is_empty() {
+                out.push(chunk);
             }
             continue;
         }
 
-        // We want to chunk by major definitions
+        let s = chunk.content.as_str();
+        let char_indices: Vec<usize> = s.char_indices().map(|(i, _)| i).collect();
+        let total_chars = char_indices.len();
+        let mut char_pos = 0usize;
+
+        while char_pos < total_chars {
+            let mut end_char = (char_pos + max_chars).min(total_chars);
+            let start_byte = char_indices[char_pos];
+            let raw_end_byte = if end_char < total_chars {
+                char_indices[end_char]
+            } else {
+                s.len()
+            };
+
+            // Try to snap backward to a newline boundary if it keeps at least half the window
+            let mut end_byte = raw_end_byte;
+            if end_char < total_chars {
+                let slice = &s[start_byte..raw_end_byte];
+                if let Some(nl_rel) = slice.rfind('\n') {
+                    let candidate_byte = start_byte + nl_rel + 1;
+                    let candidate_chars = s[start_byte..candidate_byte].chars().count();
+                    if candidate_chars >= max_chars / 2 {
+                        end_byte = candidate_byte;
+                        end_char = char_pos + candidate_chars;
+                    }
+                }
+            }
+
+            let piece = &s[start_byte..end_byte];
+            if !piece.trim().is_empty() {
+                out.push(Chunk {
+                    start: chunk.start + start_byte as u64,
+                    end: chunk.start + end_byte as u64,
+                    content: piece.to_string(),
+                    metadata: chunk.metadata.clone(),
+                });
+            }
+
+            if end_char >= total_chars {
+                break;
+            }
+            let step = end_char
+                .saturating_sub(char_pos)
+                .saturating_sub(overlap)
+                .max(1);
+            char_pos += step;
+        }
+    }
+
+    out
+}
+
+pub fn chunk_rust(content: &str) -> Result<Vec<Chunk>> {
+    let mut parser = Parser::new();
+    let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+    parser.set_language(&language)?;
+
+    let tree = parser
+        .parse(content, None)
+        .ok_or_else(|| anyhow!("Failed to parse Rust code"))?;
+    let root_node = tree.root_node();
+    let mut chunks = Vec::new();
+    let mut cursor = root_node.walk();
+
+    let mut pending_prefix_start: Option<usize> = None;
+
+    for child in root_node.children(&mut cursor) {
+        let kind = child.kind();
+
+        if matches!(kind, "line_comment" | "block_comment" | "attribute_item") {
+            if pending_prefix_start.is_none() {
+                pending_prefix_start = Some(child.start_byte());
+            }
+            continue;
+        }
+
         if matches!(
             kind,
-            "function_item" | "impl_item" | "struct_item" | "enum_item" | "mod_item" | "trait_item"
+            "function_item"
+                | "impl_item"
+                | "struct_item"
+                | "enum_item"
+                | "mod_item"
+                | "trait_item"
+                | "const_item"
+                | "static_item"
+                | "type_item"
+                | "macro_definition"
         ) {
-            let start_byte = pending_comments_start.unwrap_or(child.start_byte()) as u64;
-            let end_byte = child.end_byte() as u64;
-
-            // Ensure we capture from the start of comments if present
-            let chunk_start = pending_comments_start.unwrap_or(child.start_byte());
-            let chunk_content = &content[chunk_start..child.end_byte()];
+            let chunk_start = pending_prefix_start.unwrap_or(child.start_byte());
+            let chunk_end = child.end_byte();
+            let chunk_content = &content[chunk_start..chunk_end];
 
             chunks.push(Chunk {
-                start: start_byte,
-                end: end_byte,
+                start: chunk_start as u64,
+                end: chunk_end as u64,
                 content: chunk_content.to_string(),
                 metadata: None,
             });
 
-            pending_comments_start = None;
+            pending_prefix_start = None;
         } else {
-            // Reset comments if we hit something else (like whitespace or other nodes)
-            // But wait, whitespace isn't a node usually.
-            // If we hit something else that isn't a comment or a target item, we should probably clear comments?
-            // E.g. a macro_invocation or use_declaration.
-            // Yes, clear comments.
-            pending_comments_start = None;
+            pending_prefix_start = None;
         }
     }
 
-    // If no chunks found (e.g. script or just comments), fallback to text chunking
     if chunks.is_empty() && !content.trim().is_empty() {
         return chunk_text(content);
     }
 
-    Ok(chunks)
+    Ok(enforce_chunk_budget(
+        chunks,
+        DEFAULT_MAX_CHUNK_CHARS,
+        DEFAULT_CHUNK_OVERLAP,
+    ))
 }
 
 /// Semantic chunking for Python using Tree-sitter
 pub fn chunk_python(content: &str) -> Result<Vec<Chunk>> {
     let mut parser = Parser::new();
-    let language = tree_sitter_python::language();
-    parser.set_language(language)?;
+    let language: tree_sitter::Language = tree_sitter_python::LANGUAGE.into();
+    parser.set_language(&language)?;
 
     let tree = parser
         .parse(content, None)
-        .ok_or_else(|| anyhow::anyhow!("Failed to parse Python code"))?;
+        .ok_or_else(|| anyhow!("Failed to parse Python code"))?;
     let root_node = tree.root_node();
     let mut chunks = Vec::new();
     let mut cursor = root_node.walk();
 
     for child in root_node.children(&mut cursor) {
         let kind = child.kind();
-        // Chunk by function definitions, class definitions, and decorated definitions
         if matches!(
             kind,
             "function_definition" | "class_definition" | "decorated_definition"
         ) {
-            let start_byte = child.start_byte() as u64;
-            let end_byte = child.end_byte() as u64;
-            let chunk_content = &content[child.start_byte()..child.end_byte()];
-
             chunks.push(Chunk {
-                start: start_byte,
-                end: end_byte,
-                content: chunk_content.to_string(),
+                start: child.start_byte() as u64,
+                end: child.end_byte() as u64,
+                content: content[child.start_byte()..child.end_byte()].to_string(),
                 metadata: None,
             });
         }
@@ -120,25 +198,28 @@ pub fn chunk_python(content: &str) -> Result<Vec<Chunk>> {
         return chunk_text(content);
     }
 
-    Ok(chunks)
+    Ok(enforce_chunk_budget(
+        chunks,
+        DEFAULT_MAX_CHUNK_CHARS,
+        DEFAULT_CHUNK_OVERLAP,
+    ))
 }
 
-/// Semantic chunking for JavaScript using Tree-sitter
+/// Semantic chunking for JavaScript/JSX using Tree-sitter
 pub fn chunk_javascript(content: &str) -> Result<Vec<Chunk>> {
     let mut parser = Parser::new();
-    let language = tree_sitter_javascript::language();
-    parser.set_language(language)?;
+    let language: tree_sitter::Language = tree_sitter_javascript::LANGUAGE.into();
+    parser.set_language(&language)?;
 
     let tree = parser
         .parse(content, None)
-        .ok_or_else(|| anyhow::anyhow!("Failed to parse JavaScript code"))?;
+        .ok_or_else(|| anyhow!("Failed to parse JavaScript code"))?;
     let root_node = tree.root_node();
     let mut chunks = Vec::new();
     let mut cursor = root_node.walk();
 
     for child in root_node.children(&mut cursor) {
         let kind = child.kind();
-        // Chunk by functions, classes, and exports
         if matches!(
             kind,
             "function_declaration"
@@ -147,19 +228,14 @@ pub fn chunk_javascript(content: &str) -> Result<Vec<Chunk>> {
                 | "lexical_declaration"
                 | "expression_statement"
         ) {
-            // For expression_statement, only include if it's a significant size
             if kind == "expression_statement" && child.end_byte() - child.start_byte() < 50 {
                 continue;
             }
 
-            let start_byte = child.start_byte() as u64;
-            let end_byte = child.end_byte() as u64;
-            let chunk_content = &content[child.start_byte()..child.end_byte()];
-
             chunks.push(Chunk {
-                start: start_byte,
-                end: end_byte,
-                content: chunk_content.to_string(),
+                start: child.start_byte() as u64,
+                end: child.end_byte() as u64,
+                content: content[child.start_byte()..child.end_byte()].to_string(),
                 metadata: None,
             });
         }
@@ -169,42 +245,40 @@ pub fn chunk_javascript(content: &str) -> Result<Vec<Chunk>> {
         return chunk_text(content);
     }
 
-    Ok(chunks)
+    Ok(enforce_chunk_budget(
+        chunks,
+        DEFAULT_MAX_CHUNK_CHARS,
+        DEFAULT_CHUNK_OVERLAP,
+    ))
 }
 
-/// Semantic chunking for TypeScript using Tree-sitter
-pub fn chunk_typescript(content: &str) -> Result<Vec<Chunk>> {
+fn chunk_ts_with_language(content: &str, language: tree_sitter::Language) -> Result<Vec<Chunk>> {
     let mut parser = Parser::new();
-    let language = tree_sitter_typescript::language_typescript();
-    parser.set_language(language)?;
+    parser.set_language(&language)?;
 
     let tree = parser
         .parse(content, None)
-        .ok_or_else(|| anyhow::anyhow!("Failed to parse TypeScript code"))?;
+        .ok_or_else(|| anyhow!("Failed to parse TypeScript/TSX code"))?;
     let root_node = tree.root_node();
     let mut chunks = Vec::new();
     let mut cursor = root_node.walk();
 
     for child in root_node.children(&mut cursor) {
         let kind = child.kind();
-        // Chunk by functions, classes, interfaces, types, and exports
         if matches!(
             kind,
             "function_declaration"
                 | "class_declaration"
                 | "interface_declaration"
                 | "type_alias_declaration"
+                | "enum_declaration"
                 | "export_statement"
                 | "lexical_declaration"
         ) {
-            let start_byte = child.start_byte() as u64;
-            let end_byte = child.end_byte() as u64;
-            let chunk_content = &content[child.start_byte()..child.end_byte()];
-
             chunks.push(Chunk {
-                start: start_byte,
-                end: end_byte,
-                content: chunk_content.to_string(),
+                start: child.start_byte() as u64,
+                end: child.end_byte() as u64,
+                content: content[child.start_byte()..child.end_byte()].to_string(),
                 metadata: None,
             });
         }
@@ -214,25 +288,38 @@ pub fn chunk_typescript(content: &str) -> Result<Vec<Chunk>> {
         return chunk_text(content);
     }
 
-    Ok(chunks)
+    Ok(enforce_chunk_budget(
+        chunks,
+        DEFAULT_MAX_CHUNK_CHARS,
+        DEFAULT_CHUNK_OVERLAP,
+    ))
+}
+
+/// Semantic chunking for TypeScript using Tree-sitter
+pub fn chunk_typescript(content: &str) -> Result<Vec<Chunk>> {
+    chunk_ts_with_language(content, tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+}
+
+/// Semantic chunking for TSX (TypeScript + JSX) using Tree-sitter
+pub fn chunk_tsx(content: &str) -> Result<Vec<Chunk>> {
+    chunk_ts_with_language(content, tree_sitter_typescript::LANGUAGE_TSX.into())
 }
 
 /// Semantic chunking for Go using Tree-sitter
 pub fn chunk_go(content: &str) -> Result<Vec<Chunk>> {
     let mut parser = Parser::new();
-    let language = tree_sitter_go::language();
-    parser.set_language(language)?;
+    let language: tree_sitter::Language = tree_sitter_go::LANGUAGE.into();
+    parser.set_language(&language)?;
 
     let tree = parser
         .parse(content, None)
-        .ok_or_else(|| anyhow::anyhow!("Failed to parse Go code"))?;
+        .ok_or_else(|| anyhow!("Failed to parse Go code"))?;
     let root_node = tree.root_node();
     let mut chunks = Vec::new();
     let mut cursor = root_node.walk();
 
     for child in root_node.children(&mut cursor) {
         let kind = child.kind();
-        // Chunk by functions, methods, types, and const/var declarations
         if matches!(
             kind,
             "function_declaration"
@@ -241,14 +328,10 @@ pub fn chunk_go(content: &str) -> Result<Vec<Chunk>> {
                 | "const_declaration"
                 | "var_declaration"
         ) {
-            let start_byte = child.start_byte() as u64;
-            let end_byte = child.end_byte() as u64;
-            let chunk_content = &content[child.start_byte()..child.end_byte()];
-
             chunks.push(Chunk {
-                start: start_byte,
-                end: end_byte,
-                content: chunk_content.to_string(),
+                start: child.start_byte() as u64,
+                end: child.end_byte() as u64,
+                content: content[child.start_byte()..child.end_byte()].to_string(),
                 metadata: None,
             });
         }
@@ -258,145 +341,186 @@ pub fn chunk_go(content: &str) -> Result<Vec<Chunk>> {
         return chunk_text(content);
     }
 
-    Ok(chunks)
+    Ok(enforce_chunk_budget(
+        chunks,
+        DEFAULT_MAX_CHUNK_CHARS,
+        DEFAULT_CHUNK_OVERLAP,
+    ))
+}
+
+fn parse_fence_marker(trimmed: &str) -> Option<(char, usize)> {
+    let first = trimmed.chars().next()?;
+    if first != '`' && first != '~' {
+        return None;
+    }
+    let count = trimmed.chars().take_while(|&c| c == first).count();
+    if count >= 3 {
+        Some((first, count))
+    } else {
+        None
+    }
+}
+
+fn parse_atx_header(line: &str) -> Option<(usize, &str)> {
+    let trimmed = line.trim_end_matches(['\r', '\n']);
+    let level = trimmed.chars().take_while(|&c| c == '#').count();
+    if level == 0 || level > 6 {
+        return None;
+    }
+    let rest = &trimmed[level..];
+    // ATX headers require whitespace or end-of-line after '#'
+    if rest.is_empty() || rest.starts_with(' ') || rest.starts_with('\t') {
+        Some((level, rest.trim()))
+    } else {
+        None
+    }
 }
 
 pub fn chunk_markdown(content: &str) -> Result<Vec<Chunk>> {
     let mut chunks = Vec::new();
-    let mut current_chunk_start = 0;
-    let mut current_chunk_content = String::new();
+    let mut current_chunk_start: usize = 0;
+    let mut current_chunk_end: usize = 0;
     let mut header_stack: Vec<String> = Vec::new();
+    let mut active_fence: Option<(char, usize)> = None;
 
-    for line in content.lines() {
-        // Check for headers
-        if line.starts_with("#") {
-            // If we have accumulated content, push it as a chunk
-            if !current_chunk_content.trim().is_empty() {
-                let metadata = if !header_stack.is_empty() {
-                    Some(serde_json::json!({ "headers": header_stack }).to_string())
-                } else {
-                    None
-                };
+    let mut byte_offset: usize = 0;
+    for line in content.split_inclusive('\n') {
+        let line_start = byte_offset;
+        let line_end = byte_offset + line.len();
+        byte_offset = line_end;
 
-                chunks.push(Chunk {
-                    start: current_chunk_start as u64,
-                    end: (current_chunk_start + current_chunk_content.len()) as u64,
-                    content: current_chunk_content.clone(),
-                    metadata,
-                });
+        let trimmed_start = line.trim_start();
+        if let Some((fence_char, fence_len)) = active_fence {
+            if let Some((c, len)) = parse_fence_marker(trimmed_start) {
+                if c == fence_char && len >= fence_len && trimmed_start[len..].trim().is_empty() {
+                    active_fence = None;
+                }
             }
+            current_chunk_end = line_end;
+            continue;
+        } else if let Some((c, len)) = parse_fence_marker(trimmed_start) {
+            active_fence = Some((c, len));
+            current_chunk_end = line_end;
+            continue;
+        }
 
-            // Update header stack
-            let level = line.chars().take_while(|c| *c == '#').count();
-            let title = line[level..].trim().to_string();
+        if let Some((level, title)) = parse_atx_header(line) {
+            if current_chunk_end > current_chunk_start {
+                let slice = &content[current_chunk_start..current_chunk_end];
+                if !slice.trim().is_empty() {
+                    let metadata = if !header_stack.is_empty() {
+                        Some(serde_json::json!({ "headers": header_stack }).to_string())
+                    } else {
+                        None
+                    };
+                    chunks.push(Chunk {
+                        start: current_chunk_start as u64,
+                        end: current_chunk_end as u64,
+                        content: slice.to_string(),
+                        metadata,
+                    });
+                }
+            }
 
             if level > header_stack.len() {
-                header_stack.push(title);
+                header_stack.push(title.to_string());
             } else {
                 header_stack.truncate(level - 1);
-                header_stack.push(title);
+                header_stack.push(title.to_string());
             }
 
-            // Start new chunk
-            current_chunk_start += current_chunk_content.len() + 1; // +1 for newline (approx)
-            current_chunk_content = line.to_string();
-            current_chunk_content.push('\n');
+            current_chunk_start = line_start;
+            current_chunk_end = line_end;
         } else {
-            current_chunk_content.push_str(line);
-            current_chunk_content.push('\n');
+            if current_chunk_end == current_chunk_start {
+                current_chunk_start = line_start;
+            }
+            current_chunk_end = line_end;
         }
     }
 
-    // Push last chunk
-    if !current_chunk_content.trim().is_empty() {
-        let metadata = if !header_stack.is_empty() {
-            Some(serde_json::json!({ "headers": header_stack }).to_string())
-        } else {
-            None
-        };
-
-        chunks.push(Chunk {
-            start: current_chunk_start as u64,
-            end: (current_chunk_start + current_chunk_content.len()) as u64,
-            content: current_chunk_content,
-            metadata,
-        });
+    if current_chunk_end > current_chunk_start {
+        let slice = &content[current_chunk_start..current_chunk_end];
+        if !slice.trim().is_empty() {
+            let metadata = if !header_stack.is_empty() {
+                Some(serde_json::json!({ "headers": header_stack }).to_string())
+            } else {
+                None
+            };
+            chunks.push(Chunk {
+                start: current_chunk_start as u64,
+                end: current_chunk_end as u64,
+                content: slice.to_string(),
+                metadata,
+            });
+        }
     }
 
-    // Fallback if no headers found
     if chunks.is_empty() && !content.trim().is_empty() {
         return chunk_text(content);
     }
 
-    Ok(chunks)
+    Ok(enforce_chunk_budget(
+        chunks,
+        DEFAULT_MAX_CHUNK_CHARS,
+        DEFAULT_CHUNK_OVERLAP,
+    ))
 }
 
 pub fn chunk_text(content: &str) -> Result<Vec<Chunk>> {
     let mut chunks = Vec::new();
-    let mut start = 0;
+    let mut start = 0usize;
 
-    // Simple paragraph splitter for Phase 1
     for paragraph in content.split("\n\n") {
-        let len = paragraph.len() as u64;
-        if len == 0 {
-            start += 2; // Skip double newline
-            continue;
+        let len = paragraph.len();
+        if !paragraph.trim().is_empty() {
+            chunks.push(Chunk {
+                start: start as u64,
+                end: (start + len) as u64,
+                content: paragraph.to_string(),
+                metadata: None,
+            });
         }
-
-        chunks.push(Chunk {
-            start,
-            end: start + len,
-            content: paragraph.to_string(),
-            metadata: None,
-        });
-
-        start += len + 2; // content + \n\n
+        start += len + 2;
     }
 
-    Ok(chunks)
+    Ok(enforce_chunk_budget(
+        chunks,
+        DEFAULT_MAX_CHUNK_CHARS,
+        DEFAULT_CHUNK_OVERLAP,
+    ))
 }
 
 pub fn chunk_pdf(path: &std::path::Path) -> Result<Vec<Chunk>> {
     let bytes = std::fs::read(path)?;
-    let content = pdf_extract::extract_text_from_mem(&bytes)?;
+    let extracted = catch_unwind(AssertUnwindSafe(|| {
+        pdf_extract::extract_text_from_mem(&bytes)
+    }))
+    .map_err(|_| anyhow!("PDF parser panicked while reading {:?}", path))??;
 
+    let normalized = extracted.replace('\x0c', "\n\n");
     let mut chunks = Vec::new();
-    let mut start = 0;
-
-    // Split by double newlines (paragraphs)
-    // Also consider page breaks as boundaries
-    let _splits = content.split(['\n', '\x0c']);
-    // Actually, splitting by \n might be too aggressive if it's just line wrapping.
-    // Let's split by \n\n or \x0c
-
-    // Simple approach: Normalize \x0c to \n\n, then split by \n\n
-    let normalized = content.replace('\x0c', "\n\n");
+    let mut start = 0usize;
 
     for paragraph in normalized.split("\n\n") {
-        let len = paragraph.len() as u64;
-        if len == 0 {
-            start += 2;
-            continue;
-        }
-
-        // Clean up whitespace
+        let len = paragraph.len();
         let clean_para = paragraph.trim();
-        if clean_para.is_empty() {
-            start += len + 2;
-            continue;
+        if !clean_para.is_empty() {
+            chunks.push(Chunk {
+                start: start as u64,
+                end: (start + len) as u64,
+                content: clean_para.to_string(),
+                metadata: None,
+            });
         }
-
-        chunks.push(Chunk {
-            start,
-            end: start + len,
-            content: clean_para.to_string(),
-            metadata: None, // Could add page number if we tracked it
-        });
-
         start += len + 2;
     }
 
-    Ok(chunks)
+    Ok(enforce_chunk_budget(
+        chunks,
+        DEFAULT_MAX_CHUNK_CHARS,
+        DEFAULT_CHUNK_OVERLAP,
+    ))
 }
 
 #[cfg(test)]
@@ -420,58 +544,91 @@ mod tests {
     }
 
     #[test]
-    fn test_chunk_rust() {
+    fn test_chunk_rust_preserves_attrs_docs_and_consts() {
         let content = r#"
+/// Doc comment for Bar
+#[derive(Debug, Clone)]
+pub struct Bar {
+    pub x: i32,
+}
+
+pub const MAX_SIZE: usize = 1024;
+pub type MyResult<T> = Result<T, String>;
+
+/// Helper function
+#[inline]
 fn foo() {
     println!("Hello");
 }
-
-struct Bar {
-    x: i32,
-}
 "#;
         let chunks = chunk_rust(content).unwrap();
-        assert_eq!(chunks.len(), 2);
-        assert!(chunks[0].content.contains("fn foo"));
-        assert!(chunks[1].content.contains("struct Bar"));
+        assert_eq!(chunks.len(), 4);
+        assert!(chunks[0].content.contains("/// Doc comment for Bar"));
+        assert!(chunks[0].content.contains("#[derive(Debug, Clone)]"));
+        assert!(chunks[0].content.contains("pub struct Bar"));
+        assert!(chunks[1].content.contains("pub const MAX_SIZE"));
+        assert!(chunks[2].content.contains("pub type MyResult"));
+        assert!(chunks[3].content.contains("/// Helper function"));
+        assert!(chunks[3].content.contains("#[inline]"));
+        assert!(chunks[3].content.contains("fn foo"));
     }
 
     #[test]
-    fn test_chunk_markdown() {
-        let content = r#"# Header 1
-Some text.
-
-## Header 2
-More text.
-"#;
+    fn test_chunk_markdown_respects_code_fences_and_exact_offsets() {
+        let content = "# Header 1\nSome text.\n```bash\n# This is a bash comment, not a header\necho hi\n```\n\n## Header 2\nMore text.\n";
         let chunks = chunk_markdown(content).unwrap();
         assert_eq!(chunks.len(), 2);
-        assert!(chunks[0].content.contains("# Header 1"));
-        assert!(chunks[1].content.contains("## Header 2"));
+        assert!(chunks[0].content.contains("# This is a bash comment"));
+        assert_eq!(
+            &content[chunks[0].start as usize..chunks[0].end as usize],
+            chunks[0].content
+        );
+        assert_eq!(
+            &content[chunks[1].start as usize..chunks[1].end as usize],
+            chunks[1].content
+        );
+        assert!(chunks[1].content.starts_with("## Header 2"));
     }
 
     #[test]
-    fn test_chunk_pdf_logic() {
-        // Simulate PDF content with Form Feed characters
-        let content = "Page 1 content\x0cPage 2 content\x0cPage 3 content";
+    fn test_chunk_tsx_parses_jsx_syntax() {
+        let content = r#"
+export interface Props {
+    title: string;
+}
 
-        let mut chunks = Vec::new();
-        let mut start = 0;
-        for page in content.split('\x0c') {
-            let len = page.len() as u64;
-            chunks.push(Chunk {
-                start,
-                end: start + len,
-                content: page.to_string(),
-                metadata: None,
-            });
-            start += len + 1;
+export function Card({ title }: Props) {
+    return <div className="card"><h1>{title}</h1></div>;
+}
+"#;
+        let chunks = chunk_by_type(content, "tsx").unwrap();
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].content.contains("interface Props"));
+        assert!(chunks[1].content.contains("<div className=\"card\">"));
+    }
+
+    #[test]
+    fn test_chunk_size_budget_splits_giant_items() {
+        let giant_body = "let x = 1;\n".repeat(400); // > 4000 chars
+        let content = format!("fn huge() {{\n{}}}\n", giant_body);
+        let chunks = chunk_by_type_with_limits(&content, "rs", 500, 50).unwrap();
+        assert!(chunks.len() > 5, "Giant function should be sub-split");
+        for chunk in &chunks {
+            assert!(
+                chunk.content.chars().count() <= 500,
+                "Chunk exceeded budget: {}",
+                chunk.content.chars().count()
+            );
         }
+    }
 
-        assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0].content, "Page 1 content");
-        assert_eq!(chunks[1].content, "Page 2 content");
-        assert_eq!(chunks[2].content, "Page 3 content");
+    #[test]
+    fn test_chunk_pdf_handles_corrupt_bytes_without_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad_pdf = dir.path().join("corrupt.pdf");
+        std::fs::write(&bad_pdf, b"%PDF-1.4\nnot a valid pdf body\x00\xff").unwrap();
+        let result = chunk_pdf(&bad_pdf);
+        assert!(result.is_err());
     }
 
     #[test]

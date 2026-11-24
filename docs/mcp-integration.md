@@ -1,27 +1,33 @@
-# Claude Desktop Integration Guide
+# MCP Integration Guide
 
-This guide explains how to integrate **contextd** with Claude Desktop as an MCP (Model Context Protocol) server.
+This guide explains how to integrate **contextd** with Claude Desktop, Claude Code, Cursor, VS Code, Codex, OpenCode, Continue, Copilot CLI, and Antigravity via the Model Context Protocol (MCP).
 
-## Overview
+## Automatic Setup (Recommended)
 
-contextd provides semantic search capabilities to Claude Desktop through the MCP protocol. This allows Claude to:
+```bash
+# Download the default embedding model (stored in platform data dir)
+contextd setup
 
-- Search your codebase using natural language queries
-- Find semantically related code and documentation
-- Filter results by file type or minimum relevance score
+# Configure all detected AI tools (user scope, creates .bak backups, preserves JSONC/TOML)
+contextd connect --all
+
+# Or configure project-local configs or a single tool
+contextd connect --all --scope project
+contextd connect --tool claude-desktop
+```
 
 ## Prerequisites
 
-1. **Build contextd**:
+1. **Install or build contextd**:
    ```bash
    cargo build --release
    ```
 
-2. **Create a configuration file** (`contextd.toml`):
+2. **Create a user config** (`~/.config/contextd/contextd.toml` on Linux, `~/Library/Application Support/contextd/contextd.toml` on macOS):
    ```toml
    [storage]
-   db_path = "~/.contextd/index.db"
-   model_path = "~/.contextd/models"
+   db_path = "~/.local/share/contextd/contextd.db"
+   model_path = "~/.local/share/contextd/models"
 
    [watch]
    paths = ["/path/to/your/codebase"]
@@ -29,142 +35,55 @@ contextd provides semantic search capabilities to Claude Desktop through the MCP
 
 3. **Download the embedding model**:
    ```bash
-   # Use the built-in setup command
-   cargo run -- setup
+   contextd setup
    ```
 
-## Claude Desktop Configuration
+## Manual Claude Desktop Configuration
 
-Add contextd to your `claude_desktop_config.json`:
-
-### macOS
-```bash
-# Location: ~/Library/Application Support/Claude/claude_desktop_config.json
-```
-
-### Linux
-```bash
-# Location: ~/.config/Claude/claude_desktop_config.json
-```
-
-### Windows
-```batch
-:: Location: %APPDATA%\Claude\claude_desktop_config.json
-```
-
-### Configuration
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Linux:** `~/.config/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "contextd": {
-      "command": "/path/to/contextd/target/release/contextd",
-      "args": ["mcp", "--config", "/path/to/contextd.toml"],
-      "env": {}
+      "command": "/path/to/contextd",
+      "args": ["mcp", "--config", "/path/to/contextd.toml"]
     }
   }
 }
 ```
 
-Replace `/path/to/contextd` with the actual path to your built binary (e.g., `target/release/contextd`).
-
-## Cline / Roo Code (VSCode)
-
-1. Open the MCP Servers settings (usually via the "MCP Servers" tab or command palette).
-2. Add a new server:
-   - **Name**: `contextd`
-   - **Command**: `/path/to/contextd/target/release/contextd`
-   - **Args**: `mcp`, `--config`, `/path/to/contextd.toml`
-
-## Continue (VSCode / JetBrains)
-
-Add to your `config.json`:
-
-```json
-"mcpServers": [
-  {
-    "name": "contextd",
-    "command": "/path/to/contextd/target/release/contextd",
-    "args": ["mcp", "--config", "/path/to/contextd.toml"]
-  }
-]
-```
-
-## GitHub Copilot
-
-GitHub Copilot is expected to add MCP support soon. Once available, the configuration will likely follow the standard MCP server format:
-
-- **Command**: `/path/to/contextd/target/release/contextd`
-- **Args**: `["mcp", "--config", "/path/to/contextd.toml"]`
+> Note: `--config` is a global flag and can appear either before or after the subcommand. When omitted, `contextd mcp` resolves config, database, and model paths from platform XDG directories so it works reliably regardless of the client's working directory.
 
 ## Available Tools
 
-### search_context
+### `search_context`
 
-Search for relevant code or documentation by meaning.
+Hybrid semantic + keyword (FTS5) search over your indexed codebase.
 
-**Parameters:**
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `query` | string | Yes | Natural language search query |
-| `limit` | number | No | Max results (default: 5) |
-| `file_types` | string[] | No | Filter by extensions (e.g., ["rs", "py"]) |
-| `min_score` | number | No | Minimum relevance score (0.0-1.0) |
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | Natural language or keyword search query |
+| `limit` | integer | No | Max results (default: 5, max: 100) |
+| `file_types` | string[] | No | Filter by extensions (e.g., `["rs", "py"]`) |
+| `paths` | string[] | No | Filter by path substrings |
+| `min_score` | number | No | Minimum relevance score (`0.0`-`1.0`) |
+| `start_time` | integer | No | Filter files modified at or after UNIX timestamp (seconds) |
+| `end_time` | integer | No | Filter files modified at or before UNIX timestamp (seconds) |
+| `context_lines` | integer | No | Surrounding source lines to include (`0`-`20`) |
 
-**Example usage in Claude:**
-> "Search contextd for functions that handle file indexing"
-> "Find code related to embedding generation, only in Rust files"
+### `get_status`
 
-### get_status
-
-Get the current indexing status.
-
-**Returns:**
-- Number of indexed files
-- Total content chunks
-- Database size
+Returns indexed file count, total chunks, and database size.
 
 ## First-Time Setup
 
-1. **Start contextd in daemon mode first** to build the initial index:
-   ```bash
-   ./target/release/contextd daemon --config ./contextd.toml
-   ```
-   Wait for the initial indexing to complete.
+1. Start `contextd daemon` to build and maintain the index.
+2. Restart your MCP client after running `contextd connect --all`.
+3. Ask your AI assistant to call `get_status` or `search_context`.
 
-2. **Restart your MCP Client** (Claude Desktop, VSCode, etc.) after configuring.
+## Logs
 
-3. **Verify the connection** by asking your AI assistant:
-   > "Use contextd to get the indexing status"
-
-## Troubleshooting
-
-### "Server not found" or connection issues
-
-1. Check that the path to contextd is correct
-2. Ensure the binary has execute permissions: `chmod +x contextd`
-3. Verify the config file exists at the specified path
-
-### "Database error" or empty results
-
-1. Ensure you've run contextd in daemon mode first to build the index
-2. Check that the database file exists at the configured path
-3. Verify the embedding model is downloaded to the model path
-
-### Logs
-
-When running as an MCP server, contextd logs to stderr. Check Claude Desktop's logs for error messages.
-
-## Architecture
-
-```
-┌─────────────────┐     stdio      ┌──────────────────┐
-│  Claude Desktop │ ◄─────────────►│     contextd     │
-│   (MCP Client)  │    JSON-RPC    │   (MCP Server)   │
-└─────────────────┘                └────────┬─────────┘
-                                            │
-                                   ┌────────▼─────────┐
-                                   │  SQLite + Index  │
-                                   │   Embeddings     │
-                                   └──────────────────┘
-```
+`contextd mcp` writes protocol diagnostics to `stderr` only (never stdout, and never logs source code or search result contents).

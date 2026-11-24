@@ -1,253 +1,253 @@
+use anyhow::Result;
+use contextd::api::{self, QueryResponse, StatusResponse};
+use contextd::config::Config;
+use contextd::daemon;
+use contextd::indexer::embeddings::TextEmbedder;
+use contextd::storage::db::{ChunkInput, Database};
 use futures_util::future;
 use reqwest::Client;
 use serde_json::json;
 use std::fs;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
-use tokio::process::Command;
 use tokio::time::sleep;
 
-const TEST_PORT: u16 = 13030; // Different from default 3030
+struct DeterministicEmbedder;
 
-/// Helper to start the daemon in the background and wait for its health endpoint
-async fn start_test_daemon(
-    config_path: PathBuf,
-    port: u16,
-) -> (
-    tokio::process::Child,
-    Client,
-    Option<tokio::process::ChildStdin>,
-) {
-    use std::process::Stdio;
-    let mut daemon = Command::new("./target/release/contextd")
-        .arg("--config")
-        .arg(config_path)
-        .arg("daemon")
-        .stdin(Stdio::piped())
-        .spawn()
-        .expect("Failed to start daemon");
-
-    // Keep the stdin pipe open so the daemon's EOF monitor stays blocked
-    let stdin_writer = daemon.stdin.take();
-
-    let client = Client::new();
-    let health_url = format!("http://127.0.0.1:{}/health", port);
-
-    for _ in 0..30 {
-        if let Ok(resp) = client.get(&health_url).send().await {
-            if resp.status().is_success() {
-                return (daemon, client, stdin_writer);
-            }
+impl TextEmbedder for DeterministicEmbedder {
+    fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        let mut v = vec![0.0_f32; 384];
+        for (i, byte) in text.bytes().enumerate() {
+            v[(byte as usize + i * 7) % 384] += 1.0;
         }
-        sleep(Duration::from_millis(500)).await;
+        let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm > 1e-6 {
+            for x in &mut v {
+                *x /= norm;
+            }
+        } else {
+            v[0] = 1.0;
+        }
+        Ok(v)
     }
 
-    let _ = daemon.kill().await;
-    let _ = tokio::time::timeout(Duration::from_secs(1), daemon.wait()).await;
-    panic!("Daemon didn't become healthy within 15s");
+    fn embedding_dim(&self) -> usize {
+        384
+    }
+
+    fn model_type(&self) -> &str {
+        "all-minilm-l6-v2"
+    }
 }
 
-/// Test concurrent API requests
+/// Test 50 concurrent API requests hitting the WAL reader pool + hybrid search.
 #[tokio::test]
 async fn test_concurrent_api_requests() {
-    // Create temporary directory for test
     let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
+    let db_path = temp_dir.path().join("load_concurrent.db");
+    let db = Database::open(&db_path, 384, "all-minilm-l6-v2").unwrap();
+    let embedder: Arc<dyn TextEmbedder> = Arc::new(DeterministicEmbedder);
 
-    // Create a minimal config
-    let config = format!(
-        r#"
-[server]
-host = "127.0.0.1"
-port = {}
+    for i in 0..30 {
+        let content = format!("pub fn concurrent_handler_{}() -> usize {{ {} }}", i, i);
+        let emb = embedder.embed(&content).unwrap();
+        db.index_file_chunks(
+            &format!("/repo/src/mod_{}.rs", i),
+            1700000000 + i as u64,
+            (1700000000 + i as i64) * 1_000_000_000,
+            content.len() as u64,
+            &format!("hash_{}", i),
+            &[ChunkInput {
+                start: 0,
+                end: content.len() as u64,
+                content: &content,
+                embedding: Some(&emb),
+                metadata: None,
+            }],
+        )
+        .unwrap();
+    }
 
-[storage]
-db_path = "{}"
-model_path = "models"
+    let listener = api::bind_server("127.0.0.1", 0, None).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_handle = tokio::spawn(async move {
+        let _ = api::serve_on_listener(listener, db, embedder, None).await;
+    });
 
-[search]
-enable_cache = true
+    let client = Client::new();
+    let base_url = format!("http://{}", addr);
 
-[watch]
-paths = []
-
-[chunking]
-max_chunk_size = 512
-"#,
-        TEST_PORT,
-        db_path.display()
-    );
-
-    let config_path = temp_dir.path().join("test_config.toml");
-    fs::write(&config_path, config).unwrap();
-
-    let (mut daemon, client, _stdin) = start_test_daemon(config_path, TEST_PORT).await;
-    let base_url = format!("http://127.0.0.1:{}", TEST_PORT);
-
-    // Send 50 concurrent requests
-    let mut handles = vec![];
+    let mut handles = Vec::new();
     for i in 0..50 {
         let client = client.clone();
         let url = base_url.clone();
-
-        let handle = tokio::spawn(async move {
+        handles.push(tokio::spawn(async move {
             let resp = client
                 .post(format!("{}/query", url))
                 .json(&json!({
-                    "query": format!("test query {}", i),
+                    "query": format!("concurrent_handler_{}", i % 30),
                     "limit": 5
                 }))
                 .send()
-                .await;
-
-            resp.is_ok()
-        });
-
-        handles.push(handle);
+                .await
+                .ok()?;
+            if !resp.status().is_success() {
+                return None;
+            }
+            let body: QueryResponse = resp.json().await.ok()?;
+            Some(!body.results.is_empty())
+        }));
     }
 
-    // Collect results
     let results: Vec<bool> = future::join_all(handles)
         .await
         .into_iter()
-        .map(|r| r.unwrap_or(false))
+        .map(|r| r.ok().flatten().unwrap_or(false))
         .collect();
 
-    let success_count = results.iter().filter(|&&r| r).count();
+    server_handle.abort();
 
-    // Clean up
-    let _ = daemon.kill().await;
-
-    // At least 80% of requests should succeed
-    assert!(
-        success_count >= 40,
-        "Only {}/50 requests succeeded",
+    let success_count = results.iter().filter(|&&ok| ok).count();
+    assert_eq!(
+        success_count, 50,
+        "All 50 concurrent hybrid queries must succeed with results, got {}/50",
         success_count
     );
 }
 
-/// Test rapid file changes
+/// Test rapid creation of 50 files watched by the daemon and verify they are indexed and queryable.
 #[tokio::test]
 async fn test_rapid_file_changes() {
     let temp_dir = TempDir::new().unwrap();
     let watch_dir = temp_dir.path().join("watched");
     fs::create_dir(&watch_dir).unwrap();
+    let db_path = temp_dir.path().join("rapid.db");
 
-    let db_path = temp_dir.path().join("test.db");
+    let mut config = Config::default();
+    config.server.host = "127.0.0.1".to_string();
+    config.server.port = 0; // Ephemeral port
+    config.storage.db_path = db_path.clone();
+    config.storage.model_path = temp_dir.path().join("models");
+    config.watch.paths = vec![watch_dir.clone()];
+    config.watch.debounce_ms = 100;
 
-    let config = format!(
-        r#"
-[server]
-host = "127.0.0.1"
-port = {}
+    let db = Database::open(&db_path, 384, "all-minilm-l6-v2").unwrap();
+    let db_check = db.clone();
+    let embedder: Arc<dyn TextEmbedder> = Arc::new(DeterministicEmbedder);
 
-[storage]
-db_path = "{}"
-model_path = "models"
+    let daemon_handle = tokio::spawn(async move {
+        let _ = daemon::run_with_components(config, db, embedder).await;
+    });
 
-[watch]
-paths = ["{}"]
-debounce_ms = 200
+    sleep(Duration::from_millis(300)).await;
 
-[chunking]
-max_chunk_size = 512
-"#,
-        TEST_PORT + 1,
-        db_path.display(),
-        watch_dir.display()
-    );
-
-    let config_path = temp_dir.path().join("test_config.toml");
-    fs::write(&config_path, config).unwrap();
-
-    let (mut daemon, _, _stdin) = start_test_daemon(config_path, TEST_PORT + 1).await;
-
-    // Create 100 files rapidly
-    for i in 0..100 {
+    for i in 0..50 {
         let file_path = watch_dir.join(format!("file_{}.rs", i));
-        fs::write(file_path, format!("fn test_{} () {{}}", i)).unwrap();
+        fs::write(
+            file_path,
+            format!("pub fn rapid_fn_{}() -> i32 {{ {} }}", i, i),
+        )
+        .unwrap();
     }
 
-    // Wait for debouncing to settle
-    sleep(Duration::from_secs(5)).await;
+    // Poll until all 50 files are indexed (up to 10s)
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut final_count = 0;
+    while Instant::now() < deadline {
+        final_count = db_check.get_stats().unwrap().file_count;
+        if final_count >= 50 {
+            break;
+        }
+        sleep(Duration::from_millis(150)).await;
+    }
 
-    // Clean up
-    let _ = daemon.kill().await;
-
-    // If we get here without panic/crash, test passed
-    assert!(true, "Daemon handled rapid file changes without crashing");
+    daemon_handle.abort();
+    assert_eq!(
+        final_count, 50,
+        "Expected all 50 rapidly created files to be indexed, got {}",
+        final_count
+    );
 }
 
-/// Test sustained load over time
+/// Test sustained query + status throughput over 2 seconds with zero errors.
 #[tokio::test]
 async fn test_sustained_load() {
     let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db");
+    let db_path = temp_dir.path().join("sustained.db");
+    let db = Database::open(&db_path, 384, "all-minilm-l6-v2").unwrap();
+    let embedder: Arc<dyn TextEmbedder> = Arc::new(DeterministicEmbedder);
 
-    let config = format!(
-        r#"
-[server]
-host = "127.0.0.1"
-port = {}
+    let content = "pub fn sustained_search_target() { /* indexed payload */ }";
+    let emb = embedder.embed(content).unwrap();
+    db.index_file_chunks(
+        "/repo/sustained.rs",
+        1_700_000_000,
+        1_700_000_000_000_000_000,
+        content.len() as u64,
+        "sustained_hash",
+        &[ChunkInput {
+            start: 0,
+            end: content.len() as u64,
+            content,
+            embedding: Some(&emb),
+            metadata: None,
+        }],
+    )
+    .unwrap();
 
-[storage]
-db_path = "{}"
-model_path = "models"
+    let listener = api::bind_server("127.0.0.1", 0, None).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_handle = tokio::spawn(async move {
+        let _ = api::serve_on_listener(listener, db, embedder, None).await;
+    });
 
-[search]
-enable_cache = true
+    let client = Client::new();
+    let base_url = format!("http://{}", addr);
 
-[watch]
-paths = []
+    let start = Instant::now();
+    let mut query_count = 0u32;
+    let mut success_count = 0u32;
 
-[chunking]
-max_chunk_size = 512
-"#,
-        TEST_PORT + 2,
-        db_path.display()
-    );
-
-    let config_path = temp_dir.path().join("test_config.toml");
-    fs::write(&config_path, config).unwrap();
-
-    let (mut daemon, client, _stdin) = start_test_daemon(config_path, TEST_PORT + 2).await;
-    let base_url = format!("http://127.0.0.1:{}", TEST_PORT + 2);
-
-    // Send queries continuously for 30 seconds (reduced from 5 minutes for faster testing)
-    let start = std::time::Instant::now();
-    let mut query_count = 0;
-    let mut success_count = 0;
-
-    while start.elapsed() < Duration::from_secs(30) {
+    while start.elapsed() < Duration::from_secs(2) {
         let resp = client
             .post(format!("{}/query", base_url))
             .json(&json!({
-                "query": format!("sustained test {}", query_count),
+                "query": "sustained_search_target",
                 "limit": 3
             }))
             .send()
             .await;
 
         query_count += 1;
-        if resp.is_ok() {
-            success_count += 1;
+        if let Ok(r) = resp {
+            if r.status().is_success() {
+                if let Ok(parsed) = r.json::<QueryResponse>().await {
+                    if !parsed.results.is_empty() {
+                        success_count += 1;
+                    }
+                }
+            }
         }
-
-        // Small sleep to avoid overwhelming
-        sleep(Duration::from_millis(100)).await;
+        sleep(Duration::from_millis(25)).await;
     }
 
-    // Clean up
-    let _ = daemon.kill().await;
+    let status: StatusResponse = client
+        .get(format!("{}/status", base_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
 
-    // At least 90% of queries should succeed
-    let success_rate = (success_count as f64) / (query_count as f64);
-    assert!(
-        success_rate >= 0.9,
-        "Success rate too low: {:.2}% ({}/{})",
-        success_rate * 100.0,
-        success_count,
-        query_count
+    server_handle.abort();
+
+    assert_eq!(status.indexed_files, 1);
+    assert!(query_count >= 10);
+    assert_eq!(
+        success_count, query_count,
+        "Expected 100% sustained query success, got {}/{}",
+        success_count, query_count
     );
 }

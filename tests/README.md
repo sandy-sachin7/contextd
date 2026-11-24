@@ -1,48 +1,39 @@
-# Running Robustness Tests - Quick Reference
+# Running contextd Tests
 
-## Prerequisites
-
-```bash
-# Ensure release binary is built for integration tests
-cargo build --release
-
-# For memory stress test only
-pip install psutil
-```
-
-## Quick Verification (30 seconds)
+## Full Rust Test Suite
 
 ```bash
-cargo test --bin contextd
+# Run all unit and integration tests (no network or pre-downloaded models required)
+cargo test
+
+# Formatting and lint checks
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
 ```
 
-Expected: `test result: ok. 26 passed; 0 failed; 1 ignored`
-
-## All Tests
+## Targeted Test Suites
 
 ### Unit Tests
 ```bash
-cargo test --bin contextd
+cargo test --lib
 ```
 
 ### Integration Tests
 ```bash
-# Run each test file separately (recommended)
 cargo test --test load_test
 cargo test --test watcher_test
-
-# Or run all with single thread to avoid port conflicts
-cargo test --test '*' -- --test-threads=1
+cargo test --test zero_config_test
 ```
 
-### MCP E2E Tests
+### MCP End-to-End Tests (requires downloaded model)
 ```bash
+cargo build --release
+cargo run --release -- setup
 python3 scripts/test_mcp_local.py
 ```
 
-### Memory Stress Test
+### Memory Stress Test (requires `psutil`)
 ```bash
+pip install psutil
 python3 scripts/memory_stress_test.py
 ```
-
-See [walkthrough.md](file:///home/sachin/.gemini/antigravity/brain/3ab4aac8-7218-4a37-9603-40227ed3ca02/walkthrough.md) for detailed documentation.

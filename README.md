@@ -17,12 +17,11 @@
 ## Why contextd?
 
 - 🔒 **100% Local** - Your code never leaves your machine
-- 🤖 **MCP Native** - Universal backend for Claude, Cline, Roo Code, Continue, & more
-- 🔍 **Hybrid Search** - Combines semantic understanding with keyword precision (FTS5)
-- ⚡ **Lightning Fast** - Query caching and optimized indexing
-- 🌍 **Polyglot** - Native support for Rust, Python, JS/TS, Go, Markdown, PDF
-- 🎯 **Smart Chunking** - Tree-sitter based semantic code splitting
-- 🔌 **Extensible** - Plugin system for any file format
+- 🤖 **MCP Native** - JSON-RPC 2.0 / MCP backend for Claude Desktop, Claude Code, Cursor, VS Code, Codex, OpenCode, Continue, Copilot CLI, & Antigravity
+- 🔍 **Hybrid Search** - Combines `sqlite-vec` KNN semantic embeddings with tokenized SQLite FTS5 keyword search (normalized RRF) across CLI, HTTP API, and MCP
+- ⚡ **Concurrent WAL Storage** - Dedicated WAL read-only connection pool + transactional writes and batched ONNX inference
+- 🌍 **Polyglot** - Tree-sitter semantic chunking for Rust, Python, JS/JSX, TS/TSX, Go, plus Markdown and PDF
+- 🛡️ **Secure by Default** - DNS-rebinding protection, optional bearer auth, secret/binary file exclusions, SHA-256 verified model downloads, and workspace plugin trust gating
 
 ## Quick Start
 
@@ -32,367 +31,147 @@
 curl -fsSL https://raw.githubusercontent.com/sandy-sachin7/contextd/main/scripts/playground.sh | bash
 ```
 
-This downloads contextd, indexes your current directory, and runs a semantic search — no setup needed.
-
 ### 1. Install
 
-**One-line installer (Linux/macOS):**
+**One-line installer (Linux/macOS, with SHA-256 verification):**
 ```bash
-curl -sSL https://raw.githubusercontent.com/sandy-sachin7/contextd/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/sandy-sachin7/contextd/main/scripts/install.sh | bash
 ```
 
 **Homebrew (macOS/Linux):**
 ```bash
-brew install sandy-sachin7/tap/contextd
+brew install --build-from-source ./homebrew/contextd.rb
 ```
 
 **Docker:**
 ```bash
-docker run -v $PWD:/workspace ghcr.io/sandy-sachin7/contextd
+docker run -p 127.0.0.1:3030:3030 \
+  -e CONTEXTD_AUTH_TOKEN=replace-with-strong-token \
+  -v "$PWD:/workspace:ro" \
+  ghcr.io/sandy-sachin7/contextd
 ```
 
 **From source:**
 ```bash
 git clone https://github.com/sandy-sachin7/contextd.git
 cd contextd
-cargo run -- setup
-cargo build --release
+cargo build --release --locked
+./target/release/contextd setup
 ```
 
 ### 2. Run as Daemon
 ```bash
 # Start the daemon (watches your configured directories)
-./target/release/contextd daemon
+contextd daemon
 
-# Or use the CLI for one-off queries
-./target/release/contextd query "authentication system"
+# One-off hybrid queries from the CLI
+contextd query "authentication system" --limit 10 --min-score 0.5 --context 2
 ```
 
 ### 3. Connect your AI Tools (Automatic)
 
 ```bash
-# Auto-detect AI tools and configure MCP for all of them
+# Auto-detect AI tools and configure user-global MCP settings
 contextd connect --all
+
+# Or configure project-local settings / a single tool
+contextd connect --all --scope project
+contextd connect --tool claude-desktop
 ```
 
-contextd supports **8 AI tools** out of the box:
+contextd supports **9 AI tools** out of the box:
 
-| Tool | Config Format | Detection |
-|------|--------------|-----------|
-| **Claude Desktop** | Object (`mcpServers`) | Binary in PATH |
-| **Claude Code** | Object (`mcpServers`) | Binary in PATH |
-| **Cursor** | Object (`mcpServers`) | Binary or `.cursor/` dir |
-| **VSCode Copilot** | Object (`servers`) | Always detected |
-| **Copilot CLI** | Object (`mcpServers`) | Binary in PATH |
-| **OpenCode** | Object (`mcp` + `$schema`) | Binary or `~/.config/opencode/` |
-| **Continue** | Array (`mcpServers[]`) | `~/.continue/` directory |
-| **Antigravity (agy)** | Object (`mcpServers`) | Binary in PATH |
+| Tool | ID | Config Format | Detection |
+|------|----|--------------|-----------|
+| **Claude Desktop** | `claude-desktop` | Object (`mcpServers`) | App / config dir |
+| **Claude Code** | `claude-code` | Object (`mcpServers`) | `claude` binary or `~/.claude.json` |
+| **Cursor** | `cursor` | Object (`mcpServers`) | `cursor` binary or `~/.cursor/` |
+| **VS Code Copilot** | `vscode-copilot` | Object (`servers`) | `code` / `code-insiders` or `.vscode/` |
+| **Copilot CLI** | `copilot-cli` | Object (`mcpServers`) | `copilot` / `github-copilot-cli` in PATH |
+| **OpenCode** | `opencode` | Object (`mcp` + `$schema`) | `opencode` binary or `~/.config/opencode/` |
+| **Continue** | `continue` | Array (`mcpServers[]`) | `~/.continue/` directory |
+| **Antigravity (agy)** | `antigravity` | Object (`mcpServers`) | `agy` binary in PATH |
+| **Codex** | `codex` | TOML (`[mcp_servers.contextd]`) | `codex` binary or `~/.codex/config.toml` |
 
 Each `contextd connect` run:
-1. Detects installed tools
-2. Reads existing config (preserves other entries)
-3. Adds or updates `contextd` MCP server entry
-4. Writes config atomically
+1. Parses JSON/JSONC (preserving comments/trailing commas via JSON5) and TOML (preserving comments via `toml_edit`)
+2. Refuses to overwrite if an existing config has syntax errors
+3. Writes a `.bak` backup and atomically replaces the target file
 
 See [MCP Integration Guide](docs/mcp-integration.md) for manual setup.
 
-## Features in Detail
-
-### 🔍 Hybrid Search
-
-contextd combines vector embeddings with full-text search (SQLite FTS5) for superior results:
-
-- **Semantic**: Understands meaning and context
-- **Keyword**: Fast exact matches
-- **Weighted**: Automatically balances both approaches
-
-### 🧩 Smart Code Chunking
-
-Tree-sitter based parsing for:
-- **Python**: Functions, classes, methods
-- **JavaScript/TypeScript**: Functions, classes, arrow functions
-- **Go**: Functions, methods, structs
-- **Rust**: Functions, structs, impls, traits
-- **Markdown**: Header-based sections
-- **PDF**: Page-level extraction
-
-### ⚡ Performance
-
-- **Query Caching**: Repeated queries use cached embeddings
-- **Adaptive Debouncing**: Batches file changes to avoid CPU spikes
-- **Incremental Updates**: Only re-indexes changed files
-
-### 🎯 Search Intelligence (v1.0.0+)
-
-- **Recency Boost**: Recently modified files rank higher (configurable `recency_weight`)
-- **Frequency Ranking**: Frequently queried files get priority (configurable `frequency_weight`)
-- **Smart Blending**: Combines semantic, keyword, recency, and frequency signals
-
-### 🔌 Plugin System
-
-Extend support to any file format:
-```toml
-[plugins]
-docx = ["pandoc", "-t", "plain"]
-ipynb = ["jupyter", "nbconvert", "--to", "markdown", "--stdout"]
-```
-
 ## Usage
 
-### Daemon Mode (Background Service)
+### Daemon Mode
 ```bash
-# Start daemon with default config
 contextd daemon
-
-# With custom config
 contextd daemon --config /path/to/contextd.toml
+# Optional: exit automatically if parent stdin closes (editor integrations)
+contextd daemon --exit-on-stdin-eof
 ```
 
-### CLI Mode (One-off Queries)
+### CLI Query Mode
 ```bash
-# Basic query
 contextd query "authentication"
+contextd query "database schema" --limit 10 --min-score 0.5 --file-types rs,sql
+contextd query "API changes" --after 2024-12-01 --before 2026-12-31 --context 3
+```
 
-# With filters
-contextd query "database schema" --limit 10 --min-score 0.7
-
-# Filter by time range
-contextd query "API changes" --after 2024-12-01
+### Shell Completions
+```bash
+contextd completions bash > ~/.local/share/bash-completion/completions/contextd
+contextd completions zsh  > ~/.zfunc/_contextd
+contextd completions fish > ~/.config/fish/completions/contextd.fish
 ```
 
 ### REST API
 ```bash
-# Query endpoint
-curl -X POST http://localhost:3030/query \
+# Hybrid search endpoint
+curl -X POST http://127.0.0.1:3030/query \
   -H "Content-Type: application/json" \
   -d '{
     "query": "How does auth work?",
     "limit": 5,
     "min_score": 0.5,
-    "file_types": [".rs", ".py"]
+    "file_types": ["rs", "py"],
+    "context_lines": 2
   }'
 
-# Health check
-curl http://localhost:3030/health
-
-# Status/stats
-curl http://localhost:3030/status
+# Health check & status
+curl http://127.0.0.1:3030/health
+curl http://127.0.0.1:3030/status
 ```
 
 ### MCP Server Mode
 ```bash
-# Run as MCP server (for Claude Desktop integration)
 contextd mcp
+contextd mcp --config /path/to/contextd.toml
 ```
 
 ## Configuration
 
-```toml
-[server]
-host = "127.0.0.1"
-port = 3030
-
-[storage]
-db_path = "contextd.db"
-model_path = "models"
-model_type = "all-minilm-l6-v2"  # See available models below
-```
+See [Configuration Guide](docs/book/src/configuration.md) and [`contextd.example.toml`](contextd.example.toml).
 
 ### Available Embedding Models
 
-| Model | Dimensions | Best For |
-|-------|------------|----------|
-| `all-minilm-l6-v2` (default) | 384 | General purpose, fast |
-| `all-mpnet-base-v2` | 768 | Higher quality, recommended for code |
-| `bge-small-en-v1.5` | 384 | Good quality/speed balance |
+| Model | Dimensions | Pooling | Best For |
+|-------|------------|---------|----------|
+| `all-minilm-l6-v2` (default) | 384 | Mean | General purpose, fast |
+| `all-mpnet-base-v2` | 768 | Mean | Higher quality, recommended for code |
+| `bge-small-en-v1.5` | 384 | CLS | Quality/speed balance for retrieval |
 
-To switch models, change `model_type` in config and run:
-```bash
-contextd setup
-```
-
-### Full Configuration
-```toml
-[server]
-host = "127.0.0.1"
-port = 3030
-
-[storage]
-db_path = "contextd.db"
-model_path = "models"
-model_type = "all-minilm-l6-v2"
-
-[search]
-enable_cache = true
-cache_ttl_seconds = 3600
-hybrid_weight = 0.7  # 70% semantic, 30% keyword
-
-[watch]
-paths = ["/path/to/code", "/path/to/docs"]
-debounce_ms = 200
-
-[chunking]
-max_chunk_size = 512
-overlap = 50
-
-[plugins]
-docx = ["pandoc", "-t", "plain"]
-py = ["cat"]  # Or use native parser
-```
-
-## Ignoring Files
-
-contextd respects `.gitignore` by default. You can also create a `.contextignore` file to exclude specific files from indexing without affecting git:
-
-```gitignore
-# .contextignore
-*.log
-temp/
-secret_keys.json
-```
-
-## Use Cases
-
-### 1. AI-Powered Code Understanding
-Ask Claude "Show me how authentication is implemented" and get actual code from your project.
-
-### 2. Documentation Search
-Index your Markdown docs and query them semantically: "deployment process" finds relevant sections even without exact keywords.
-
-### 3. Research Notes
-Turn your Zettelkasten or Obsidian vault into a queryable knowledge base.
-
-### 4. Legacy Codebase Exploration
-Point contextd at that scary old project and let AI help you understand it.
-
-## Architecture
-```
-┌─────────────┐
-│  File Watch │ → Debouncer → .contextignore Filter
-└─────────────┘
-       │
-       ▼
-┌─────────────┐
-│   Parser    │ → Plugin System / Native Parsers
-└─────────────┘
-       │
-       ▼
-┌─────────────┐
-│   Chunker   │ → Tree-sitter (Rust/Py/JS/TS/Go) / Header-based (MD) / Pages (PDF)
-└─────────────┘
-       │
-       ▼
-┌─────────────┐
-│  Embedder   │ → ONNX Runtime (Local, no cloud!)
-└─────────────┘
-       │
-       ▼
-┌─────────────┐
-│   Storage   │ → SQLite + FTS5 (Hybrid search)
-└─────────────┘
-       │
-       ▼
-┌─────────────┐
-│ Query Layer │ → REST API / CLI / MCP Server
-└─────────────┘
-```
-
-## Integrations
-
-contextd works with any tool that supports the [Model Context Protocol](https://modelcontextprotocol.io):
-
-- **Claude Desktop**: [Setup Guide](docs/mcp-integration.md#claude-desktop)
-- **Cline / Roo Code**: [Setup Guide](docs/mcp-integration.md#cline--roo-code)
-- **Continue**: [Setup Guide](docs/mcp-integration.md#continue)
-
-### VSCode Extension [![VSCode Marketplace](https://img.shields.io/badge/VSCode-Marketplace-blue)](https://marketplace.visualstudio.com/items?itemName=sandy-sachin7.contextd-vscode)
-
-Full-featured extension with webview search panel, QuickPick, sidebar, and daemon lifecycle management.
-Install from [marketplace](https://marketplace.visualstudio.com/items?itemName=sandy-sachin7.contextd-vscode) or search "contextd" in VSCode extensions.
-
-### Obsidian Plugin
-Community contribution welcome!
-
-## Performance
-
-Benchmarks on a typical codebase (10K files, ~500K LOC):
-
-- **Initial indexing**: ~2-3 minutes
-- **Query latency**: <50ms p99
-- **Memory usage**: ~150MB for 100K chunks
-- **Re-index on file change**: <100ms
-
-## Comparison
-
-| Feature | contextd | Sourcegraph | GitHub Copilot | Cursor | Roo Code |
-|---------|----------|-------------|----------------|--------|---------|
-| Local-first | ✅ | ❌ | ❌ | ❌ | ✅ |
-| MCP Native | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Hybrid Search | ✅ | ✅ | ❌ | ✅ | ❌ |
-| Open Source | ✅ | Partial | ❌ | ❌ | ✅ |
-| Self-hosted | ✅ | ✅ ($$$) | ❌ | ❌ | ✅ |
-| Auto-configure 8 tools | ✅ | ❌ | ❌ | ❌ | ❌ |
-| VSCode Extension | ✅ | ✅ | ✅ | ❌ | ✅ |
+All downloads use pinned HuggingFace commit revisions verified by SHA-256.
 
 ## Testing
 
-contextd includes a comprehensive test suite ensuring rock-solid reliability:
-
-### Test Coverage
-
-- **28 Unit Tests**: Core functionality (chunking, plugins, database, ranking)
-- **8 Integration Tests**: Load testing, file watcher reliability
-- **25+ E2E Tests**: MCP protocol compliance, error handling, edge cases
-- **Memory Stress Testing**: 10K files, 1K queries with profiling
-
-### Running Tests
-
 ```bash
-# Unit tests (fastest - 30s)
-cargo test --bin contextd
-
-# Integration tests
-cargo test --test load_test
-cargo test --test watcher_test
-
-# MCP end-to-end tests
-python3 scripts/test_mcp_local.py
-
-# Memory stress test (requires psutil)
-pip install psutil
-python3 scripts/memory_stress_test.py
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 ```
 
-See [`tests/README.md`](tests/README.md) for detailed testing documentation.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md)
-
-## Roadmap
-
-- [x] Pre-built binaries (Linux/Mac) ✅ v0.2.0
-- [x] Homebrew formula ✅ v0.2.0
-- [x] Docker image ✅ v0.2.0
-- [x] Recency boost ✅ v1.0.0
-- [x] Frequency ranking ✅ v1.1.0
-- [x] VSCode extension ✅
-- [x] Automatic MCP configuration for 8 AI tools ✅
-- [ ] Additional embedding models (CodeBERT, UniXcoder)
-- [ ] Re-ranking layer (cross-encoder)
-- [ ] Smart Context Windows
+See [`tests/README.md`](tests/README.md) for details.
 
 ## License
 
 MIT - see [LICENSE](LICENSE)
-
-## Acknowledgments
-
-- Tree-sitter for AST parsing
-- ONNX Runtime for local inference
-- SQLite FTS5 for hybrid search
-- The MCP community for the protocol
-
----
-
-**Star ⭐ this repo if contextd helps you understand your code better!**

@@ -1,13 +1,13 @@
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use contextd::cli;
+use contextd::cli::{self, QueryCliOptions};
 use contextd::config::Config;
 use contextd::daemon;
-use contextd::indexer::embeddings::Embedder;
+use contextd::indexer::embeddings::{Embedder, TextEmbedder};
 use contextd::mcp;
 use contextd::storage::db::Database;
-use std::sync::Arc;
 
 #[derive(Parser, Debug)]
 #[command(name = "contextd")]
@@ -15,8 +15,12 @@ use std::sync::Arc;
 #[command(version)]
 struct Cli {
     /// Path to the configuration file
-    #[arg(short, long, default_value = "contextd.toml")]
-    config: PathBuf,
+    #[arg(short, long, global = true)]
+    config: Option<PathBuf>,
+
+    /// Explicitly trust and execute [plugins] from a workspace-local contextd.toml
+    #[arg(long, global = true, default_value_t = false)]
+    trust_workspace_plugins: bool,
 
     #[command(subcommand)]
     command: Option<cli::Commands>,
@@ -26,37 +30,80 @@ struct Cli {
 async fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
 
-    let config = if args.config.exists() {
-        Config::load(&args.config)?
-    } else {
-        Config::default()
-    };
+    // Handle shell completions immediately without loading config
+    if let Some(cli::Commands::Completions { shell }) = args.command {
+        let mut cmd = Cli::command();
+        let name = cmd.get_name().to_string();
+        clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
+        return Ok(());
+    }
 
-    match args.command.unwrap_or(cli::Commands::Daemon) {
-        cli::Commands::Daemon => {
+    let config = Config::load_resolved(args.config.as_deref(), args.trust_workspace_plugins)?;
+
+    match args.command.unwrap_or(cli::Commands::Daemon {
+        exit_on_stdin_eof: false,
+    }) {
+        cli::Commands::Daemon { exit_on_stdin_eof } => {
             println!("contextd starting in daemon mode...");
-            daemon::run(config).await?;
+            daemon::run(config, exit_on_stdin_eof).await?;
         }
         cli::Commands::Mcp => {
             eprintln!("contextd starting in MCP mode...");
             if !contextd::download::model_files_exist(&config.storage.model_path) {
-                eprintln!("Models not found in {:?}. Please run 'contextd daemon' or start the VS Code extension to initialize them before using MCP.", config.storage.model_path);
+                eprintln!(
+                    "Models not found in {:?}. Run 'contextd setup' or 'contextd daemon' first.",
+                    config.storage.model_path
+                );
                 std::process::exit(1);
             }
 
-            let db = Database::new(&config.storage.db_path)?;
-            let embedder = Arc::new(Embedder::new(&config.storage)?);
+            let storage_cfg = config.storage.clone();
+            let (db, embedder): (Database, Arc<dyn TextEmbedder>) =
+                tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+                    let embedder = Embedder::new(&storage_cfg)?;
+                    let db = Database::open(
+                        &storage_cfg.db_path,
+                        embedder.embedding_dim(),
+                        embedder.model_type(),
+                    )?;
+                    Ok((db, Arc::new(embedder) as Arc<dyn TextEmbedder>))
+                })
+                .await??;
+
             mcp::run_mcp_server(db, embedder, config).await;
         }
         cli::Commands::Setup => {
             cli::handle_setup(&config).await?;
         }
-        cli::Commands::Query { query, context } => {
-            cli::handle_query(&config, &query, context).await?;
+        cli::Commands::Query {
+            query,
+            context,
+            limit,
+            min_score,
+            after,
+            before,
+            file_types,
+            paths,
+        } => {
+            cli::handle_query(
+                &config,
+                &query,
+                QueryCliOptions {
+                    context_lines: context,
+                    limit,
+                    min_score,
+                    after,
+                    before,
+                    file_types,
+                    paths,
+                },
+            )
+            .await?;
         }
-        cli::Commands::Connect { all } => {
-            contextd::connect::handle_connect(all).await?;
+        cli::Commands::Connect { all, scope, tool } => {
+            contextd::connect::handle_connect(all, scope, tool.as_deref()).await?;
         }
+        cli::Commands::Completions { .. } => unreachable!(),
     }
 
     Ok(())

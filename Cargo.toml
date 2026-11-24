@@ -11,39 +11,43 @@ readme = "README.md"
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.24"
 notify = "8.2.0"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+json5 = "0.4"
 axum = "0.7"
+tower = { version = "0.4", features = ["util", "limit", "timeout"] }
+tower-http = { version = "0.5", features = ["limit", "timeout"] }
 ort = { version = "2.0.0-rc.4", features = ["ndarray"] }
-tokenizers = "0.19"
-pdf-extract = "0.7"
-chrono = { version = "0.4", features = ["serde"] }
-ndarray = "0.15" # Often needed with ort
+tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
+pdf-extract = "0.12"
 toml = "0.9.8"
+toml_edit = "0.22"
 notify-debouncer-mini = "0.7.0"
 ignore = "0.4.25"
-tree-sitter = "0.20"
-tree-sitter-rust = "0.20"
-tree-sitter-python = "0.20"
-tree-sitter-javascript = "0.20"
-tree-sitter-typescript = "0.20"
-tree-sitter-go = "0.20"
-
-schemars = "1.0"
+tree-sitter = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-python = "0.25"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.25"
 clap = { version = "4.5", features = ["derive"] }
-reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "stream", "json"] }
+clap_complete = "4.5"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
 indicatif = "0.17"
-lru = "0.16.3"
-futures-util = "0.3" # Useful for stream handling with reqwest
+futures-util = "0.3"
 sqlite-vec = "0.1.9"
-moka = { version = "0.12.15", features = ["sync"] }
-
+dirs = "6.0"
+blake3 = "1.5"
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3.23.0"
 criterion = { version = "0.5", features = ["html_reports"] }
+http-body-util = "0.1"
 
 [[bench]]
 name = "chunker_bench"

@@ -48,7 +48,7 @@ jobs:
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
         env:
           ORT_STRATEGY: download
           CFLAGS: /MD
@@ -56,7 +56,7 @@ jobs:
 
       - name: Build (Unix)
         if: runner.os != 'Windows'
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           ORT_STRATEGY: download
@@ -91,11 +91,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS.txt
+        working-directory: artifacts
+        run: |
+          sha256sum contextd-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          files: artifacts/*
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}

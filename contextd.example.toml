@@ -1,72 +1,40 @@
 [server]
 host = "127.0.0.1"
 port = 3030
+# Optional bearer token (required if binding to a non-loopback host like 0.0.0.0)
+# auth_token = "replace-with-strong-random-token"
 
 [storage]
+# Defaults to platform data directory (~/.local/share/contextd/ on Linux,
+# ~/Library/Application Support/contextd/ on macOS) when omitted.
 db_path = "contextd.db"
 model_path = "models"
+model_type = "all-minilm-l6-v2"  # all-minilm-l6-v2 | all-mpnet-base-v2 | bge-small-en-v1.5
 
 [watch]
-paths = ["."]  # Watch current directory by default
+paths = ["."]
+debounce_ms = 500
+max_file_size = 2097152  # 2 MiB default cap per file
+
+[chunking]
+max_chunk_size = 1500
+overlap = 150
+
+[security]
+# Workspace-local [plugins] in ./contextd.toml are disabled by default to prevent
+# untrusted repo command execution. Enable explicitly in user config or pass
+# --trust-workspace-plugins.
+allow_workspace_plugins = false
 
 [plugins]
-# === Programming Languages ===
-py = ["cat"]
-js = ["cat"]
-ts = ["cat"]
-jsx = ["cat"]
-tsx = ["cat"]
-go = ["cat"]
-java = ["cat"]
-c = ["cat"]
-cpp = ["cat"]
-h = ["cat"]
-hpp = ["cat"]
-cs = ["cat"]
-rb = ["cat"]
-php = ["cat"]
-swift = ["cat"]
-kt = ["cat"]
-scala = ["cat"]
-lua = ["cat"]
-sh = ["cat"]
-bash = ["cat"]
-sql = ["cat"]
-r = ["cat"]
-jl = ["cat"]
-hs = ["cat"]
-ex = ["cat"]
-clj = ["cat"]
-zig = ["cat"]
-
-# === Documents ===
-# PDF: Use the wrapper script (comes with this repo)
-# For better quality with equations, install marker-pdf and use:
-# pdf = ["marker_single", "--output_format", "markdown"]
-pdf = ["./scripts/pdftotext.sh"]
-
-# Office docs (requires: apt install pandoc)
-docx = ["pandoc", "-t", "plain"]
-odt = ["pandoc", "-t", "plain"]
-rtf = ["pandoc", "-t", "plain"]
-epub = ["pandoc", "-t", "plain"]
-html = ["pandoc", "-t", "plain"]
-
-# LaTeX source
-tex = ["cat"]
-
-# === Data Formats ===
-json = ["cat"]
-yaml = ["cat"]
-yml = ["cat"]
-xml = ["cat"]
-csv = ["cat"]
-env = ["cat"]
-ini = ["cat"]
-proto = ["cat"]
-graphql = ["cat"]
-gql = ["cat"]
-
-# === Notebooks ===
-# Requires: pip install jupyter nbconvert
+# External format parsers (native tree-sitter / text / PDF chunkers are built in;
+# only configure plugins for formats that need an external converter).
+#
+# Office docs (requires: pandoc)
+# docx = ["pandoc", "-t", "plain"]
+# odt = ["pandoc", "-t", "plain"]
+# rtf = ["pandoc", "-t", "plain"]
+# epub = ["pandoc", "-t", "plain"]
+#
+# Notebooks (requires: jupyter nbconvert)
 # ipynb = ["jupyter", "nbconvert", "--to", "markdown", "--stdout"]

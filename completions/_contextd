@@ -1,38 +1,249 @@
 #compdef contextd
 
-_contextd() {
-    local context state state_descr line
-    typeset -A opt_args
+autoload -U is-at-least
 
-    _arguments -C \
-        '(-c --config)'{-c,--config}'[Path to configuration file]:config file:_files' \
-        '(-h --help)'{-h,--help}'[Print help]' \
-        '(-V --version)'{-V,--version}'[Print version]' \
-        '1: :->cmds' \
-        '2: :->args'
+_contextd() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'-c+[Path to the configuration file]:CONFIG:_files' \
+'--config=[Path to the configuration file]:CONFIG:_files' \
+'--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_contextd_commands" \
+"*::: :->contextd" \
+&& ret=0
+    case $state in
+    (contextd)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:contextd-command-$line[1]:"
+        case $line[1] in
+            (daemon)
+_arguments "${_arguments_options[@]}" : \
+'-c+[Path to the configuration file]:CONFIG:_files' \
+'--config=[Path to the configuration file]:CONFIG:_files' \
+'--exit-on-stdin-eof[Exit automatically when stdin closes (useful when spawned by an editor extension)]' \
+'--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(mcp)
+_arguments "${_arguments_options[@]}" : \
+'-c+[Path to the configuration file]:CONFIG:_files' \
+'--config=[Path to the configuration file]:CONFIG:_files' \
+'--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(setup)
+_arguments "${_arguments_options[@]}" : \
+'-c+[Path to the configuration file]:CONFIG:_files' \
+'--config=[Path to the configuration file]:CONFIG:_files' \
+'--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(query)
+_arguments "${_arguments_options[@]}" : \
+'-C+[Number of context lines to show before/after match]:CONTEXT:_default' \
+'--context=[Number of context lines to show before/after match]:CONTEXT:_default' \
+'-l+[Maximum number of results to return (1-100)]:LIMIT:_default' \
+'--limit=[Maximum number of results to return (1-100)]:LIMIT:_default' \
+'--min-score=[Minimum relevance score (0.0-1.0)]:MIN_SCORE:_default' \
+'--after=[Only include files modified at or after this date (YYYY-MM-DD or UNIX timestamp)]:AFTER:_default' \
+'--before=[Only include files modified at or before this date (YYYY-MM-DD or UNIX timestamp)]:BEFORE:_default' \
+'*--file-types=[Filter by file extensions (e.g. --file-types rs,py)]:FILE_TYPES:_default' \
+'*--paths=[Filter by path substrings (e.g. --paths src/,docs/)]:PATHS:_default' \
+'-c+[Path to the configuration file]:CONFIG:_files' \
+'--config=[Path to the configuration file]:CONFIG:_files' \
+'--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':query:_default' \
+&& ret=0
+;;
+(connect)
+_arguments "${_arguments_options[@]}" : \
+'--scope=[Configuration scope\: user-global (default) or project-local]:SCOPE:((user\:"Configure user-global AI tool settings (default)"
+project\:"Configure project-local AI tool settings in the current directory"))' \
+'--tool=[Configure a specific tool by ID (e.g. claude-desktop, cursor, codex)]:TOOL:_default' \
+'-c+[Path to the configuration file]:CONFIG:_files' \
+'--config=[Path to the configuration file]:CONFIG:_files' \
+'--all[Configure all detected tools without prompting]' \
+'--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+'-c+[Path to the configuration file]:CONFIG:_files' \
+'--config=[Path to the configuration file]:CONFIG:_files' \
+'--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':shell -- Target shell:(bash elvish fish powershell zsh)' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_contextd__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
 
     case $state in
-        cmds)
-            _alternative 'subcommands:sub command:((daemon:"Run as a background service" mcp:"Run as an MCP server" setup:"Download embedding model" query:"One-off semantic search"))'
-            ;;
-        args)
-            case $line[1] in
-                query)
-                    _arguments \
-                        '(-l --limit)'{-l,--limit}'[Maximum results]' \
-                        '(-s --min-score)'{-s,--min-score}'[Minimum relevance score]' \
-                        '(-a --after)'{-a,--after}'[Filter by earliest modification time]' \
-                        '(-b --before)'{-b,--before}'[Filter by latest modification time]' \
-                        '1:query string:'
-                    ;;
-                daemon|mcp|setup)
-                    _arguments \
-                        '(-c --config)'{-c,--config}'[Path to configuration file]:config file:_files' \
-                        '(-h --help)'{-h,--help}'[Print help]'
-                    ;;
-            esac
-            ;;
-    esac
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:contextd-help-command-$line[1]:"
+        case $line[1] in
+            (daemon)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(mcp)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(setup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(query)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(connect)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
 }
 
-_contextd "$@"
+(( $+functions[_contextd_commands] )) ||
+_contextd_commands() {
+    local commands; commands=(
+'daemon:Run as a daemon (default)' \
+'mcp:Run as an MCP server over stdio' \
+'setup:Download and verify configured embedding model files' \
+'query:Query the index using hybrid semantic + keyword search' \
+'connect:Configure MCP for compatible AI tools' \
+'completions:Generate shell completion scripts' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'contextd commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__completions_commands] )) ||
+_contextd__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'contextd completions commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__connect_commands] )) ||
+_contextd__subcmd__connect_commands() {
+    local commands; commands=()
+    _describe -t commands 'contextd connect commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__daemon_commands] )) ||
+_contextd__subcmd__daemon_commands() {
+    local commands; commands=()
+    _describe -t commands 'contextd daemon commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__help_commands] )) ||
+_contextd__subcmd__help_commands() {
+    local commands; commands=(
+'daemon:Run as a daemon (default)' \
+'mcp:Run as an MCP server over stdio' \
+'setup:Download and verify configured embedding model files' \
+'query:Query the index using hybrid semantic + keyword search' \
+'connect:Configure MCP for compatible AI tools' \
+'completions:Generate shell completion scripts' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'contextd help commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__help__subcmd__completions_commands] )) ||
+_contextd__subcmd__help__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'contextd help completions commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__help__subcmd__connect_commands] )) ||
+_contextd__subcmd__help__subcmd__connect_commands() {
+    local commands; commands=()
+    _describe -t commands 'contextd help connect commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__help__subcmd__daemon_commands] )) ||
+_contextd__subcmd__help__subcmd__daemon_commands() {
+    local commands; commands=()
+    _describe -t commands 'contextd help daemon commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__help__subcmd__help_commands] )) ||
+_contextd__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'contextd help help commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__help__subcmd__mcp_commands] )) ||
+_contextd__subcmd__help__subcmd__mcp_commands() {
+    local commands; commands=()
+    _describe -t commands 'contextd help mcp commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__help__subcmd__query_commands] )) ||
+_contextd__subcmd__help__subcmd__query_commands() {
+    local commands; commands=()
+    _describe -t commands 'contextd help query commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__help__subcmd__setup_commands] )) ||
+_contextd__subcmd__help__subcmd__setup_commands() {
+    local commands; commands=()
+    _describe -t commands 'contextd help setup commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__mcp_commands] )) ||
+_contextd__subcmd__mcp_commands() {
+    local commands; commands=()
+    _describe -t commands 'contextd mcp commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__query_commands] )) ||
+_contextd__subcmd__query_commands() {
+    local commands; commands=()
+    _describe -t commands 'contextd query commands' commands "$@"
+}
+(( $+functions[_contextd__subcmd__setup_commands] )) ||
+_contextd__subcmd__setup_commands() {
+    local commands; commands=()
+    _describe -t commands 'contextd setup commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_contextd" ]; then
+    _contextd "$@"
+else
+    compdef _contextd contextd
+fi

@@ -14,62 +14,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-    - name: Install Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        profile: minimal
-        toolchain: stable
-        override: true
-        components: rustfmt, clippy
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
-    - name: Cache Cargo registry
-      uses: actions/cache@v3
-      with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-registry-
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
 
-    - name: Cache Cargo index
-      uses: actions/cache@v3
-      with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-index-
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-    - name: Cache Cargo build
-      uses: actions/cache@v3
-      with:
-        path: target
-        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-build-target-
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
 
-    - name: Check formatting
-      run: cargo fmt -- --check
+      - name: Run unit tests
+        run: cargo test --lib --bins --verbose
 
-    - name: Build
-      run: cargo build --verbose
+      - name: Run integration tests
+        run: cargo test --tests --verbose
 
-    - name: Run unit tests
-      run: cargo test --verbose --bin contextd
-
-    - name: Build release for integration tests
-      run: cargo build --release
-
-    - name: Run integration tests (compile only in CI)
-      run: cargo test --test '*' --no-run
-
-    - name: Build release for MCP tests
-      run: cargo build --release
-
-    - name: Run MCP e2e tests
-      run: |
-        timeout 120 python3 scripts/test_mcp_local.py || true
-
-    - name: Clippy
-      run: cargo clippy -- -D warnings
-
+      - name: Compile benchmarks
+        run: cargo test --benches --no-run

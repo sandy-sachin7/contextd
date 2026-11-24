@@ -1,5 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
+
+const CONTEXTD_BIN: &str = env!("CARGO_BIN_EXE_contextd");
 
 /// Test that ensure_model_files returns Ok(false) when all files exist.
 #[test]
@@ -8,31 +11,7 @@ fn test_ensure_model_files_when_present() {
     let model_path = dir.path().join("models");
     fs::create_dir_all(&model_path).unwrap();
 
-    // Create dummy model files
     fs::write(model_path.join("model.onnx"), b"dummy model").unwrap();
-    fs::write(model_path.join("tokenizer.json"), b"{}").unwrap();
-
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let result = rt.block_on(contextd::download::ensure_model_files(
-        &model_path,
-        "all-minilm-l6-v2",
-    ));
-    assert!(result.is_ok());
-    assert!(!result.unwrap()); // false = nothing downloaded
-}
-
-/// Test that ensure_model_files creates the model directory if missing.
-#[test]
-fn test_ensure_model_files_creates_dir() {
-    let dir = tempfile::tempdir().unwrap();
-    let model_path = dir.path().join("nonexistent_models");
-
-    // Directory doesn't exist yet
-    assert!(!model_path.exists());
-
-    // Create dummy files first so it doesn't actually try to download
-    fs::create_dir_all(&model_path).unwrap();
-    fs::write(model_path.join("model.onnx"), b"dummy").unwrap();
     fs::write(model_path.join("tokenizer.json"), b"{}").unwrap();
 
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -44,47 +23,22 @@ fn test_ensure_model_files_creates_dir() {
     assert!(!result.unwrap());
 }
 
-/// Test that ensure_model_files creates directory when needed.
+/// Test that ensure_model_files rejects unknown model types immediately without network access.
 #[test]
-fn test_ensure_model_files_partial_download() {
+fn test_ensure_model_files_rejects_unknown_model() {
     let dir = tempfile::tempdir().unwrap();
-    let model_path = dir.path().join("partial_models");
-    fs::create_dir_all(&model_path).unwrap();
+    let model_path = dir.path().join("models");
 
-    // Only tokenizer exists, model.onnx is missing
-    fs::write(model_path.join("tokenizer.json"), b"{}").unwrap();
-
-    // ensure_model_files will try to download model.onnx from network
-    // We can't test the full download in CI, but we can test that
-    // when the file is missing, it attempts a download and handles errors.
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(contextd::download::ensure_model_files(
         &model_path,
-        "all-minilm-l6-v2",
+        "definitely-unknown-model",
     ));
-
-    match &result {
-        Ok(downloaded) => {
-            // If by some chance download worked, mark it
-            assert!(*downloaded);
-        }
-        Err(e) => {
-            let msg = e.to_string().to_lowercase();
-            // Expected: network error
-            assert!(
-                msg.contains("error")
-                    || msg.contains("resolve")
-                    || msg.contains("connection")
-                    || msg.contains("timeout")
-                    || msg.contains("dns")
-                    || msg.contains("failed")
-                    || msg.contains("refused")
-                    || msg.contains("tls"),
-                "Expected network error, got: {}",
-                e
-            );
-        }
-    }
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Unsupported model_type"));
 }
 
 /// Test that Embedder::new fails gracefully with non-existent model path.
@@ -110,5 +64,41 @@ fn test_embedder_fails_without_model() {
             || err.contains("tokenizer.json"),
         "Unexpected error: {}",
         err
+    );
+}
+
+/// Test CLI binary: --version, completions generation, and global --config flag placement.
+#[test]
+fn test_cli_binary_global_config_and_completions() {
+    // 1. --version works
+    let out = Command::new(CONTEXTD_BIN)
+        .arg("--version")
+        .output()
+        .expect("Failed to execute contextd binary");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("contextd"));
+
+    // 2. Shell completions work for bash/zsh/fish
+    let out = Command::new(CONTEXTD_BIN)
+        .args(["completions", "bash"])
+        .output()
+        .expect("Failed to execute completions");
+    assert!(out.status.success());
+    let comp = String::from_utf8_lossy(&out.stdout);
+    assert!(comp.contains("_contextd"));
+
+    // 3. Global `--config` accepted AFTER subcommand (`contextd mcp --config <path>`)
+    //    and returns an error when the explicitly supplied config path does not exist.
+    let out = Command::new(CONTEXTD_BIN)
+        .args(["mcp", "--config", "/nonexistent/contextd_missing.toml"])
+        .output()
+        .expect("Failed to execute contextd mcp --config");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Failed to read config") || stderr.contains("contextd_missing.toml"),
+        "Expected config error, got: {}",
+        stderr
     );
 }

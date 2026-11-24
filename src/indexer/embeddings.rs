@@ -1,129 +1,407 @@
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
+use ort::environment::Environment;
 use ort::session::{builder::GraphOptimizationLevel, Session};
-use ort::value::Value;
-use std::sync::Mutex;
-use tokenizers::Tokenizer;
+use ort::value::{TensorElementType, Value, ValueType};
+use std::sync::{Arc, Mutex, OnceLock};
+use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
+
+static ORT_ENV: OnceLock<Environment> = OnceLock::new();
+
+fn ort_environment() -> Result<&'static Environment> {
+    if let Some(env) = ORT_ENV.get() {
+        return Ok(env);
+    }
+    let env = ort::init()
+        .build()
+        .map_err(|e| anyhow!("Failed to initialize ONNX Runtime environment: {}", e))?;
+    let _ = ORT_ENV.set(env);
+    ORT_ENV
+        .get()
+        .ok_or_else(|| anyhow!("ONNX Runtime environment not initialized"))
+}
 
 use crate::config::StorageConfig;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoolingStrategy {
+    Mean,
+    Cls,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ModelSpec {
+    pub id: &'static str,
+    pub expected_dim: usize,
+    pub max_seq_len: usize,
+    pub pooling: PoolingStrategy,
+}
+
+pub const SUPPORTED_MODELS: &[ModelSpec] = &[
+    ModelSpec {
+        id: "all-minilm-l6-v2",
+        expected_dim: 384,
+        max_seq_len: 512,
+        pooling: PoolingStrategy::Mean,
+    },
+    ModelSpec {
+        id: "all-mpnet-base-v2",
+        expected_dim: 768,
+        max_seq_len: 384,
+        pooling: PoolingStrategy::Mean,
+    },
+    ModelSpec {
+        id: "bge-small-en-v1.5",
+        expected_dim: 384,
+        max_seq_len: 512,
+        pooling: PoolingStrategy::Cls,
+    },
+];
+
+pub fn lookup_model_spec(model_type: &str) -> Result<ModelSpec> {
+    SUPPORTED_MODELS
+        .iter()
+        .copied()
+        .find(|m| m.id == model_type)
+        .ok_or_else(|| {
+            let names: Vec<&str> = SUPPORTED_MODELS.iter().map(|m| m.id).collect();
+            anyhow!(
+                "Unsupported model_type '{}'. Supported models: {}",
+                model_type,
+                names.join(", ")
+            )
+        })
+}
+
+/// Abstraction over text embedding so HTTP API and MCP servers can be unit-tested
+/// deterministically without loading ONNX model weights.
+pub trait TextEmbedder: Send + Sync {
+    fn embed(&self, text: &str) -> Result<Vec<f32>>;
+    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        texts.iter().map(|t| self.embed(t)).collect()
+    }
+    fn embedding_dim(&self) -> usize;
+    fn model_type(&self) -> &str;
+}
+
+impl<T: TextEmbedder + ?Sized> TextEmbedder for Arc<T> {
+    fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        (**self).embed(text)
+    }
+    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        (**self).embed_batch(texts)
+    }
+    fn embedding_dim(&self) -> usize {
+        (**self).embedding_dim()
+    }
+    fn model_type(&self) -> &str {
+        (**self).model_type()
+    }
+}
 
 pub struct Embedder {
     tokenizer: Tokenizer,
     session: Mutex<Session>,
     hidden_size: usize,
+    expects_token_type_ids: bool,
+    output_name: String,
+    pooling: PoolingStrategy,
+    model_type: String,
 }
 
 impl Embedder {
     pub fn new(config: &StorageConfig) -> Result<Self> {
+        let spec = lookup_model_spec(&config.model_type)?;
         let model_dir = &config.model_path;
-        let model_type = &config.model_type;
-
-        let hidden_size = match model_type.as_str() {
-            "all-minilm-l6-v2" => 384,
-            "bge-small-en-v1.5" => 384,
-            "all-mpnet-base-v2" => 768,
-            "codebert-base" | "unixcoder-base" => 768,
-            _ => 384, // Default fallback
-        };
 
         let tokenizer_path = model_dir.join("tokenizer.json");
         let model_path = model_dir.join("model.onnx");
 
-        let tokenizer = Tokenizer::from_file(tokenizer_path).map_err(|e| anyhow::anyhow!(e))?;
+        if !tokenizer_path.exists() {
+            return Err(anyhow!("Tokenizer file not found at {:?}", tokenizer_path));
+        }
+        if !model_path.exists() {
+            return Err(anyhow!("ONNX model file not found at {:?}", model_path));
+        }
 
-        let session = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_intra_threads(4)?
-            .commit_from_file(model_path)?;
+        let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
+            .map_err(|e| anyhow!("Failed to load tokenizer {:?}: {}", tokenizer_path, e))?;
+
+        tokenizer
+            .with_truncation(Some(TruncationParams {
+                max_length: spec.max_seq_len,
+                ..Default::default()
+            }))
+            .map_err(|e| anyhow!("Failed to configure tokenizer truncation: {}", e))?;
+
+        tokenizer.with_padding(Some(PaddingParams {
+            strategy: PaddingStrategy::BatchLongest,
+            ..Default::default()
+        }));
+
+        let intra_threads = std::thread::available_parallelism()
+            .map(|n| n.get().min(4))
+            .unwrap_or(2);
+
+        let env = ort_environment()?;
+        let session = Session::builder(env)
+            .map_err(|e| anyhow!("ONNX SessionBuilder creation failed: {}", e))?
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .map_err(|e| anyhow!("ONNX optimization level failed: {}", e))?
+            .with_intra_threads(intra_threads)
+            .map_err(|e| anyhow!("ONNX intra-threads config failed: {}", e))?
+            .commit_from_file(&model_path)
+            .map_err(|e| anyhow!("Failed to load ONNX model {:?}: {}", model_path, e))?;
+
+        // Dynamically inspect ONNX inputs & outputs
+        let expects_token_type_ids = session
+            .inputs()
+            .iter()
+            .any(|input| input.name() == "token_type_ids");
+
+        let (output_name, inferred_dim) = inspect_output_spec(&session, spec.expected_dim);
 
         Ok(Self {
             tokenizer,
             session: Mutex::new(session),
-            hidden_size,
+            hidden_size: inferred_dim,
+            expects_token_type_ids,
+            output_name,
+            pooling: spec.pooling,
+            model_type: spec.id.to_string(),
         })
     }
 
+    pub fn embedding_dim(&self) -> usize {
+        self.hidden_size
+    }
+
+    pub fn model_type(&self) -> &str {
+        &self.model_type
+    }
+
     pub fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        // Tokenize
-        let encoding = self
+        let mut results = self.embed_batch(&[text])?;
+        results
+            .pop()
+            .ok_or_else(|| anyhow!("Empty embedding batch result"))
+    }
+
+    pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let encodings = self
             .tokenizer
-            .encode(text, true)
-            .map_err(|e| anyhow::anyhow!(e))?;
+            .encode_batch(texts.to_vec(), true)
+            .map_err(|e| anyhow!("Tokenization failed: {}", e))?;
 
-        let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
-        let attention_mask: Vec<i64> = encoding
-            .get_attention_mask()
+        let batch_size = encodings.len();
+        let seq_len = encodings
             .iter()
-            .map(|&x| x as i64)
-            .collect();
-        let token_type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|&x| x as i64).collect();
+            .map(|e| e.get_ids().len())
+            .max()
+            .unwrap_or(0);
 
-        let batch_size = 1;
-        let seq_len = input_ids.len();
+        if seq_len == 0 {
+            return Ok(vec![vec![0.0; self.hidden_size]; batch_size]);
+        }
+
+        let mut input_ids = Vec::with_capacity(batch_size * seq_len);
+        let mut attention_mask = Vec::with_capacity(batch_size * seq_len);
+        let mut token_type_ids = Vec::with_capacity(batch_size * seq_len);
+
+        for enc in &encodings {
+            let ids = enc.get_ids();
+            let mask = enc.get_attention_mask();
+            let types = enc.get_type_ids();
+            for i in 0..seq_len {
+                input_ids.push(*ids.get(i).unwrap_or(&0) as i64);
+                attention_mask.push(*mask.get(i).unwrap_or(&0) as i64);
+                token_type_ids.push(*types.get(i).unwrap_or(&0) as i64);
+            }
+        }
+
         let shape = vec![batch_size, seq_len];
-
         let input_ids_val = Value::from_array((shape.clone(), input_ids))?;
-        let attention_mask_clone = attention_mask.clone();
-        let attention_mask_val = Value::from_array((shape.clone(), attention_mask))?;
-        let token_type_ids_val = Value::from_array((shape.clone(), token_type_ids))?;
+        let attention_mask_val = Value::from_array((shape.clone(), attention_mask.clone()))?;
 
-        // Run inference
-        let mut session = self.session.lock().unwrap();
-        let outputs = session.run(ort::inputs![
-            "input_ids" => input_ids_val,
-            "attention_mask" => attention_mask_val,
-            "token_type_ids" => token_type_ids_val,
-        ])?;
+        // Hold session lock ONLY for inference and tensor extraction, then drop immediately
+        let (out_shape, raw_data): (Vec<usize>, Vec<f32>) = {
+            let mut session = self
+                .session
+                .lock()
+                .map_err(|_| anyhow!("ONNX session mutex poisoned"))?;
 
-        // Get last_hidden_state (usually output 0)
-        // Shape: [batch_size, seq_len, hidden_size]
-        let (_shape, data) = outputs["last_hidden_state"].try_extract_tensor::<f32>()?;
-        // data is a flat slice &[f32]
+            let outputs = if self.expects_token_type_ids {
+                let token_type_ids_val = Value::from_array((shape, token_type_ids))?;
+                session.run(ort::inputs![
+                    "input_ids" => input_ids_val,
+                    "attention_mask" => attention_mask_val,
+                    "token_type_ids" => token_type_ids_val,
+                ])?
+            } else {
+                session.run(ort::inputs![
+                    "input_ids" => input_ids_val,
+                    "attention_mask" => attention_mask_val,
+                ])?
+            };
 
-        // Mean pooling
-        // We need to average the hidden states, respecting the attention mask
-        // For simplicity in this v0, we can just average all tokens (including special ones if mask is 1)
-        // Better: Average only where mask is 1.
+            let (tensor_shape, slice) = outputs[self.output_name.as_str()]
+                .try_extract_tensor::<f32>()
+                .context("Failed to extract f32 output tensor from ONNX session")?;
 
-        // Better: Average only where mask is 1.
+            let dims: Vec<usize> = tensor_shape.iter().map(|&d| d as usize).collect();
+            (dims, slice.to_vec())
+        };
 
-        let hidden_size = self.hidden_size;
-        let mut pooled = vec![0.0; hidden_size];
-        let mut count = 0.0;
+        // Pool & L2-normalize outside the session lock
+        pool_and_normalize(
+            &raw_data,
+            &out_shape,
+            &attention_mask,
+            batch_size,
+            seq_len,
+            self.hidden_size,
+            self.pooling,
+        )
+    }
+}
 
-        for (i, &mask_val) in attention_mask_clone.iter().enumerate().take(seq_len) {
-            // Check mask (assuming batch 0)
-            if mask_val == 1 {
-                // Use the cloned attention_mask vector
-                let offset = i * hidden_size;
-                for j in 0..hidden_size {
-                    pooled[j] += data[offset + j];
+impl TextEmbedder for Embedder {
+    fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        Embedder::embed(self, text)
+    }
+
+    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        Embedder::embed_batch(self, texts)
+    }
+
+    fn embedding_dim(&self) -> usize {
+        self.hidden_size
+    }
+
+    fn model_type(&self) -> &str {
+        &self.model_type
+    }
+}
+
+fn inspect_output_spec(session: &Session, fallback_dim: usize) -> (String, usize) {
+    let output = session
+        .outputs()
+        .iter()
+        .find(|o| o.name() == "last_hidden_state")
+        .or_else(|| session.outputs().first());
+
+    match output {
+        Some(outlet) => {
+            let dim = match outlet.dtype() {
+                ValueType::Tensor {
+                    ty: TensorElementType::Float32,
+                    shape,
+                    ..
+                } => shape
+                    .last()
+                    .copied()
+                    .filter(|&d| d > 0)
+                    .map(|d| d as usize)
+                    .unwrap_or(fallback_dim),
+                _ => fallback_dim,
+            };
+            (outlet.name().to_string(), dim)
+        }
+        None => ("last_hidden_state".to_string(), fallback_dim),
+    }
+}
+
+fn pool_and_normalize(
+    data: &[f32],
+    out_shape: &[usize],
+    attention_mask: &[i64],
+    batch_size: usize,
+    seq_len: usize,
+    expected_hidden_size: usize,
+    pooling: PoolingStrategy,
+) -> Result<Vec<Vec<f32>>> {
+    let hidden_size = out_shape.last().copied().unwrap_or(expected_hidden_size);
+    if hidden_size == 0 {
+        return Err(anyhow!("ONNX model returned zero hidden_size"));
+    }
+
+    let mut results = Vec::with_capacity(batch_size);
+
+    // Handle pre-pooled 2D outputs `[batch_size, hidden_size]` as well as 3D `[batch_size, seq_len, hidden_size]`
+    if out_shape.len() == 2 {
+        for b in 0..batch_size {
+            let start = b * hidden_size;
+            let end = start + hidden_size;
+            if end > data.len() {
+                return Err(anyhow!("ONNX 2D output tensor shorter than expected"));
+            }
+            let mut vec = data[start..end].to_vec();
+            l2_normalize(&mut vec);
+            results.push(vec);
+        }
+        return Ok(results);
+    }
+
+    let expected_len = batch_size * seq_len * hidden_size;
+    if data.len() < expected_len {
+        return Err(anyhow!(
+            "ONNX 3D output tensor too short: got {}, expected at least {}",
+            data.len(),
+            expected_len
+        ));
+    }
+
+    for b in 0..batch_size {
+        let mut pooled = vec![0.0_f32; hidden_size];
+        let batch_base = b * seq_len * hidden_size;
+
+        match pooling {
+            PoolingStrategy::Cls => {
+                // Use [CLS] token embedding (token index 0)
+                pooled.copy_from_slice(&data[batch_base..batch_base + hidden_size]);
+            }
+            PoolingStrategy::Mean => {
+                let mask_base = b * seq_len;
+                let mut count = 0.0_f32;
+                for i in 0..seq_len {
+                    if attention_mask[mask_base + i] == 1 {
+                        let offset = batch_base + i * hidden_size;
+                        for j in 0..hidden_size {
+                            pooled[j] += data[offset + j];
+                        }
+                        count += 1.0;
+                    }
                 }
-                count += 1.0;
+                if count > 0.0 {
+                    for val in &mut pooled {
+                        *val /= count;
+                    }
+                }
             }
         }
 
-        if count > 0.0 {
-            for val in &mut pooled {
-                *val /= count;
-            }
-        }
+        l2_normalize(&mut pooled);
+        results.push(pooled);
+    }
 
-        // Normalize (optional but good for cosine similarity)
-        let norm: f32 = pooled.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if norm > 1e-6 {
-            for val in &mut pooled {
-                *val /= norm;
-            }
-        }
+    Ok(results)
+}
 
-        Ok(pooled)
+fn l2_normalize(vec: &mut [f32]) {
+    let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 1e-6 {
+        for val in vec.iter_mut() {
+            *val /= norm;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::StorageConfig;
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -138,7 +416,41 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Requires model to be present
+    fn test_unknown_model_type_rejected() {
+        assert!(lookup_model_spec("all-minilm-l6-v2").is_ok());
+        assert_eq!(
+            lookup_model_spec("all-mpnet-base-v2").unwrap().expected_dim,
+            768
+        );
+        assert_eq!(
+            lookup_model_spec("bge-small-en-v1.5").unwrap().pooling,
+            PoolingStrategy::Cls
+        );
+        let err = lookup_model_spec("codebert-base").unwrap_err();
+        assert!(err.to_string().contains("Unsupported model_type"));
+    }
+
+    #[test]
+    fn test_pooling_mean_vs_cls() {
+        // Batch 1, seq_len 2, hidden_size 2
+        // Token 0 ([CLS]) = [3.0, 0.0], Token 1 = [0.0, 4.0]
+        let data = vec![3.0, 0.0, 0.0, 4.0];
+        let mask = vec![1, 1];
+
+        let cls =
+            pool_and_normalize(&data, &[1, 2, 2], &mask, 1, 2, 2, PoolingStrategy::Cls).unwrap();
+        assert!((cls[0][0] - 1.0).abs() < 1e-5);
+        assert!(cls[0][1].abs() < 1e-5);
+
+        let mean =
+            pool_and_normalize(&data, &[1, 2, 2], &mask, 1, 2, 2, PoolingStrategy::Mean).unwrap();
+        // Mean = [1.5, 2.0], norm = 2.5 -> [0.6, 0.8]
+        assert!((mean[0][0] - 0.6).abs() < 1e-5);
+        assert!((mean[0][1] - 0.8).abs() < 1e-5);
+    }
+
+    #[test]
+    #[ignore] // Requires model files on disk
     fn test_embedder_inference() {
         let model_dir = "models";
         if !Path::new(model_dir).exists() {
@@ -152,44 +464,5 @@ mod tests {
         let embedder = Embedder::new(&config).expect("Failed to create embedder");
         let vec = embedder.embed("hello world").expect("Failed to embed");
         assert_eq!(vec.len(), 384);
-    }
-
-    #[test]
-    fn test_model_dimension_selection() {
-        // Test that hidden_size is correctly selected based on model_type
-        // We can't instantiate without models, but we can verify the logic exists
-
-        // 384-dim models
-        assert!(matches!(
-            match "all-minilm-l6-v2" {
-                "all-minilm-l6-v2" => 384,
-                "bge-small-en-v1.5" => 384,
-                "all-mpnet-base-v2" => 768,
-                _ => 384,
-            },
-            384
-        ));
-
-        // 768-dim models
-        assert!(matches!(
-            match "all-mpnet-base-v2" {
-                "all-minilm-l6-v2" => 384,
-                "bge-small-en-v1.5" => 384,
-                "all-mpnet-base-v2" => 768,
-                _ => 384,
-            },
-            768
-        ));
-
-        // BGE model
-        assert!(matches!(
-            match "bge-small-en-v1.5" {
-                "all-minilm-l6-v2" => 384,
-                "bge-small-en-v1.5" => 384,
-                "all-mpnet-base-v2" => 768,
-                _ => 384,
-            },
-            384
-        ));
     }
 }

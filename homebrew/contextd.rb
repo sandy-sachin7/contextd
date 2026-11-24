@@ -1,60 +1,36 @@
 # Homebrew formula for contextd
-# Install: brew install sandy-sachin7/tap/contextd
-# Or local: brew install --build-from-source ./homebrew/contextd.rb
+# Install from source: brew install --build-from-source ./homebrew/contextd.rb
+# Or via tap: brew install sandy-sachin7/tap/contextd
 
 class Contextd < Formula
   desc "A local-first semantic context daemon for AI agents"
   homepage "https://github.com/sandy-sachin7/contextd"
-  version "0.1.1"
   license "MIT"
+  head "https://github.com/sandy-sachin7/contextd.git", branch: "main"
 
-  on_macos do
-    on_intel do
-      url "https://github.com/sandy-sachin7/contextd/releases/download/v#{version}/contextd-macos-x86_64"
-      sha256 "PLACEHOLDER_SHA256_MACOS_X86_64"
-    end
-
-    on_arm do
-      url "https://github.com/sandy-sachin7/contextd/releases/download/v#{version}/contextd-macos-aarch64"
-      sha256 "PLACEHOLDER_SHA256_MACOS_AARCH64"
-    end
-  end
-
-  on_linux do
-    on_intel do
-      url "https://github.com/sandy-sachin7/contextd/releases/download/v#{version}/contextd-linux-x86_64"
-      sha256 "PLACEHOLDER_SHA256_LINUX_X86_64"
-    end
-
-    on_arm do
-      url "https://github.com/sandy-sachin7/contextd/releases/download/v#{version}/contextd-linux-aarch64"
-      sha256 "PLACEHOLDER_SHA256_LINUX_AARCH64"
-    end
-  end
+  depends_on "rust" => :build
 
   def install
-    binary_name = if OS.mac?
-      Hardware::CPU.arm? ? "contextd-macos-aarch64" : "contextd-macos-x86_64"
-    else
-      Hardware::CPU.arm? ? "contextd-linux-aarch64" : "contextd-linux-x86_64"
-    end
-
-    bin.install Dir["*"].first => "contextd"
+    system "cargo", "install", "--locked", *std_cargo_args
+    generate_completions_from_executable(bin/"contextd", "completions")
   end
 
   def caveats
     <<~EOS
-      To start contextd daemon:
+      To download the default embedding model:
+        contextd setup
+
+      To start the contextd daemon:
         contextd daemon
 
-      To run as MCP server:
+      To run as an MCP server:
         contextd mcp
 
-      Configuration file location:
-        ~/.config/contextd/contextd.toml
+      To configure your AI tools automatically:
+        contextd connect --all
 
-      For more information:
-        https://github.com/sandy-sachin7/contextd
+      User configuration location:
+        ~/.config/contextd/contextd.toml
     EOS
   end
 

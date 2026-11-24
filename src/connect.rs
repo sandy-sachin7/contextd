@@ -1,19 +1,49 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use clap::ValueEnum;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::{env, fs};
+use std::env;
+use std::fs::{self, File};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConnectScope {
+    /// Configure user-global AI tool settings (default)
+    #[default]
+    User,
+    /// Configure project-local AI tool settings in the current directory
+    Project,
+}
 
 pub struct Tool {
     pub id: &'static str,
     pub name: &'static str,
     pub detect: fn() -> bool,
-    pub config_paths: fn() -> Vec<PathBuf>,
+    /// Candidate config paths for user-global scope (first existing wins, else first path).
+    pub user_config_paths: fn() -> Vec<PathBuf>,
+    /// Candidate config paths for project-local scope (empty if tool is user-global only).
+    pub project_config_paths: fn() -> Vec<PathBuf>,
     pub generate_config: fn(binary: &str) -> Value,
 }
 
 impl Tool {
-    fn merge(&self, existing: &Value, binary: &str) -> Value {
+    pub fn preferred_path(&self, scope: ConnectScope) -> Option<PathBuf> {
+        let candidates = match scope {
+            ConnectScope::User => (self.user_config_paths)(),
+            ConnectScope::Project => (self.project_config_paths)(),
+        };
+        if candidates.is_empty() {
+            return None;
+        }
+        // Prefer an existing config file; otherwise pick the primary (first) candidate
+        if let Some(existing) = candidates.iter().find(|p| p.exists()) {
+            return Some(existing.clone());
+        }
+        candidates.into_iter().next()
+    }
+
+    pub fn merge(&self, existing: &Value, binary: &str) -> Value {
         match self.id {
             "continue" => self.merge_array(existing, binary),
             "opencode" => self.merge_opencode(existing, binary),
@@ -83,7 +113,7 @@ impl Tool {
     }
 }
 
-const TOOLS: &[Tool] = &[
+pub const TOOLS: &[Tool] = &[
     Tool {
         id: "claude-desktop",
         name: "Claude Desktop",
@@ -91,81 +121,81 @@ const TOOLS: &[Tool] = &[
             if cfg!(target_os = "macos") {
                 PathBuf::from("/Applications/Claude.app").exists()
             } else if cfg!(target_os = "windows") {
-                let base = env::var("APPDATA").unwrap_or_default();
-                PathBuf::from(base).join("Claude").exists()
+                dirs::config_dir()
+                    .map(|d| d.join("Claude").exists())
+                    .unwrap_or(false)
             } else {
-                PathBuf::from(&home_dir())
-                    .join(".config")
-                    .join("Claude")
-                    .exists()
+                home_dir().join(".config/Claude").exists()
             }
         },
-        config_paths: || {
-            let home = home_dir();
+        user_config_paths: || {
             if cfg!(target_os = "macos") {
-                vec![PathBuf::from(&home)
+                vec![home_dir()
                     .join("Library/Application Support/Claude/claude_desktop_config.json")]
             } else if cfg!(target_os = "windows") {
-                let appdata = env::var("APPDATA").unwrap_or_default();
-                vec![PathBuf::from(appdata).join("Claude/claude_desktop_config.json")]
+                vec![dirs::config_dir()
+                    .unwrap_or_else(home_dir)
+                    .join("Claude/claude_desktop_config.json")]
             } else {
-                vec![PathBuf::from(&home).join(".config/Claude/claude_desktop_config.json")]
+                vec![home_dir().join(".config/Claude/claude_desktop_config.json")]
             }
         },
+        project_config_paths: Vec::new,
         generate_config: |binary| json!({ "mcpServers": { "contextd": { "command": binary, "args": ["mcp"] } } }),
     },
     Tool {
         id: "claude-code",
         name: "Claude Code",
-        detect: || {
-            binary_in_path("claude") || PathBuf::from(&home_dir()).join(".claude.json").exists()
-        },
-        config_paths: || {
-            vec![
-                PathBuf::from(".").join(".mcp.json"),
-                PathBuf::from(&home_dir()).join(".claude.json"),
-            ]
-        },
+        detect: || binary_in_path("claude") || home_dir().join(".claude.json").exists(),
+        user_config_paths: || vec![home_dir().join(".claude.json")],
+        project_config_paths: || vec![PathBuf::from(".mcp.json")],
         generate_config: |binary| json!({ "mcpServers": { "contextd": { "command": binary, "args": ["mcp"] } } }),
     },
     Tool {
         id: "cursor",
         name: "Cursor",
-        detect: || binary_in_path("cursor") || PathBuf::from(&home_dir()).join(".cursor").exists(),
-        config_paths: || {
-            vec![
-                PathBuf::from(".").join(".cursor/mcp.json"),
-                PathBuf::from(&home_dir()).join(".cursor/mcp.json"),
-            ]
-        },
+        detect: || binary_in_path("cursor") || home_dir().join(".cursor").exists(),
+        user_config_paths: || vec![home_dir().join(".cursor/mcp.json")],
+        project_config_paths: || vec![PathBuf::from(".cursor/mcp.json")],
         generate_config: |binary| json!({ "mcpServers": { "contextd": { "command": binary, "args": ["mcp"] } } }),
     },
     Tool {
         id: "vscode-copilot",
         name: "GitHub Copilot (VSCode)",
-        detect: || true,
-        config_paths: || vec![PathBuf::from(".").join(".vscode/mcp.json")],
+        detect: || {
+            binary_in_path("code")
+                || binary_in_path("code-insiders")
+                || home_dir().join(".vscode").exists()
+                || vscode_user_dir().exists()
+                || Path::new(".vscode").exists()
+        },
+        user_config_paths: || vec![vscode_user_dir().join("mcp.json")],
+        project_config_paths: || vec![PathBuf::from(".vscode/mcp.json")],
         generate_config: |binary| json!({ "servers": { "contextd": { "type": "stdio", "command": binary, "args": ["mcp"] } } }),
     },
     Tool {
         id: "copilot-cli",
         name: "GitHub Copilot CLI",
         detect: || binary_in_path("github-copilot-cli") || binary_in_path("copilot"),
-        config_paths: || vec![PathBuf::from(&home_dir()).join(".copilot/mcp-config.json")],
+        user_config_paths: || vec![home_dir().join(".copilot/mcp-config.json")],
+        project_config_paths: Vec::new,
         generate_config: |binary| json!({ "mcpServers": { "contextd": { "command": binary, "args": ["mcp"] } } }),
     },
     Tool {
         id: "opencode",
         name: "OpenCode",
-        detect: || {
-            binary_in_path("opencode")
-                || PathBuf::from(&home_dir()).join(".config/opencode").exists()
-        },
-        config_paths: || {
+        detect: || binary_in_path("opencode") || home_dir().join(".config/opencode").exists(),
+        user_config_paths: || {
             vec![
-                PathBuf::from(".").join("opencode.json"),
-                PathBuf::from(".").join("opencode.jsonc"),
-                PathBuf::from(&home_dir()).join(".config/opencode/config.json"),
+                home_dir().join(".config/opencode/opencode.json"),
+                home_dir().join(".config/opencode/opencode.jsonc"),
+                home_dir().join(".config/opencode/config.json"),
+            ]
+        },
+        project_config_paths: || {
+            vec![
+                PathBuf::from("opencode.json"),
+                PathBuf::from("opencode.jsonc"),
             ]
         },
         generate_config: |binary| {
@@ -178,45 +208,43 @@ const TOOLS: &[Tool] = &[
     Tool {
         id: "continue",
         name: "Continue",
-        detect: || PathBuf::from(&home_dir()).join(".continue").exists(),
-        config_paths: || {
-            vec![
-                PathBuf::from(&home_dir()).join(".continue/config.json"),
-                PathBuf::from(".").join(".continuerc.json"),
-            ]
-        },
+        detect: || home_dir().join(".continue").exists(),
+        user_config_paths: || vec![home_dir().join(".continue/config.json")],
+        project_config_paths: || vec![PathBuf::from(".continuerc.json")],
         generate_config: |binary| json!({ "mcpServers": [{ "name": "contextd", "command": binary, "args": ["mcp"] }] }),
     },
     Tool {
         id: "antigravity",
         name: "Antigravity (agy)",
         detect: || binary_in_path("agy"),
-        config_paths: || vec![PathBuf::from(&home_dir()).join(".antigravity/plugins/mcp.json")],
+        user_config_paths: || vec![home_dir().join(".antigravity/plugins/mcp.json")],
+        project_config_paths: Vec::new,
         generate_config: |binary| json!({ "mcpServers": { "contextd": { "command": binary, "args": ["mcp"] } } }),
     },
     Tool {
         id: "codex",
         name: "Codex",
-        detect: || {
-            binary_in_path("codex")
-                || PathBuf::from(&home_dir())
-                    .join(".codex/config.toml")
-                    .exists()
-        },
-        config_paths: || {
-            vec![
-                PathBuf::from(".").join(".codex/config.toml"),
-                PathBuf::from(&home_dir()).join(".codex/config.toml"),
-            ]
-        },
+        detect: || binary_in_path("codex") || home_dir().join(".codex/config.toml").exists(),
+        user_config_paths: || vec![home_dir().join(".codex/config.toml")],
+        project_config_paths: || vec![PathBuf::from(".codex/config.toml")],
         generate_config: |binary| json!({ "mcp_servers": { "contextd": { "command": binary, "args": ["mcp"] } } }),
     },
 ];
 
-fn home_dir() -> String {
-    env::var("HOME")
-        .or_else(|_| env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".to_string())
+fn home_dir() -> PathBuf {
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn vscode_user_dir() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        home_dir().join("Library/Application Support/Code/User")
+    } else if cfg!(target_os = "windows") {
+        dirs::config_dir()
+            .unwrap_or_else(home_dir)
+            .join("Code/User")
+    } else {
+        home_dir().join(".config/Code/User")
+    }
 }
 
 fn binary_in_path(name: &str) -> bool {
@@ -242,66 +270,204 @@ fn tool_binary_path() -> String {
     }
 }
 
-pub async fn handle_connect(all: bool) -> Result<()> {
+/// Merge `contextd` into a TOML document using `toml_edit`, preserving comments & formatting.
+fn merge_toml_preserving_comments(existing_str: &str, binary: &str) -> Result<String> {
+    let mut doc: toml_edit::DocumentMut = if existing_str.trim().is_empty() {
+        toml_edit::DocumentMut::new()
+    } else {
+        existing_str
+            .parse::<toml_edit::DocumentMut>()
+            .context("Existing TOML config has syntax errors; refusing to overwrite")?
+    };
+
+    if !doc.contains_key("mcp_servers") {
+        let mut table = toml_edit::Table::new();
+        table.set_implicit(true);
+        doc["mcp_servers"] = toml_edit::Item::Table(table);
+    }
+
+    let Some(mcp_table) = doc["mcp_servers"].as_table_mut() else {
+        return Err(anyhow!(
+            "Existing TOML key 'mcp_servers' is not a table; refusing to overwrite"
+        ));
+    };
+
+    let mut entry = toml_edit::Table::new();
+    entry["command"] = toml_edit::value(binary);
+    let mut args = toml_edit::Array::new();
+    args.push("mcp");
+    entry["args"] = toml_edit::value(args);
+
+    mcp_table.insert("contextd", toml_edit::Item::Table(entry));
+    Ok(doc.to_string())
+}
+
+/// Atomically write `content` to `target_path`, creating a `.bak` backup if `target_path` exists.
+fn atomic_write_with_backup(target_path: &Path, content: &str) -> Result<()> {
+    if let Some(parent) = target_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory {:?}", parent))?;
+        }
+    }
+
+    if target_path.exists() {
+        let mut backup_name = target_path
+            .file_name()
+            .ok_or_else(|| anyhow!("Invalid config path {:?}", target_path))?
+            .to_os_string();
+        backup_name.push(".bak");
+        let backup_path = target_path.with_file_name(backup_name);
+        fs::copy(target_path, &backup_path).with_context(|| {
+            format!(
+                "Failed to create backup {:?} before updating {:?}",
+                backup_path, target_path
+            )
+        })?;
+    }
+
+    let tmp_name = format!(
+        ".{}.contextd.tmp.{}",
+        target_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("config"),
+        std::process::id()
+    );
+    let tmp_path = target_path.with_file_name(tmp_name);
+
+    {
+        let mut file = File::create(&tmp_path)
+            .with_context(|| format!("Failed to create temp file {:?}", tmp_path))?;
+        file.write_all(content.as_bytes())?;
+        file.sync_all()?;
+    }
+
+    fs::rename(&tmp_path, target_path).with_context(|| {
+        let _ = fs::remove_file(&tmp_path);
+        format!(
+            "Failed to atomically rename {:?} to {:?}",
+            tmp_path, target_path
+        )
+    })?;
+
+    Ok(())
+}
+
+/// Update a single tool config file safely (JSON/JSONC via `json5`, TOML via `toml_edit`,
+/// aborting on parse errors without modifying the existing file, creating `.bak` + atomic write).
+pub fn configure_tool_at_path(tool: &Tool, cfg_path: &Path, binary: &str) -> Result<()> {
+    let is_toml = cfg_path.extension().and_then(|e| e.to_str()) == Some("toml");
+
+    let serialized = if is_toml {
+        let existing_str = if cfg_path.exists() {
+            fs::read_to_string(cfg_path)
+                .with_context(|| format!("Failed to read {:?}", cfg_path))?
+        } else {
+            String::new()
+        };
+        merge_toml_preserving_comments(&existing_str, binary)
+            .with_context(|| format!("Refusing to overwrite {:?}", cfg_path))?
+    } else {
+        let existing: Value = if cfg_path.exists() {
+            let content = fs::read_to_string(cfg_path)
+                .with_context(|| format!("Failed to read {:?}", cfg_path))?;
+            if content.trim().is_empty() {
+                Value::Object(Default::default())
+            } else {
+                // Use json5 so JSONC comments (//, /* */) and trailing commas parse cleanly.
+                // NEVER silently fall back to empty `{}` on parse error!
+                let parsed: Value = json5::from_str(&content).with_context(|| {
+                    format!(
+                        "Failed to parse JSON/JSONC config {:?}; refusing to overwrite existing file",
+                        cfg_path
+                    )
+                })?;
+                if !parsed.is_object() {
+                    return Err(anyhow!(
+                        "Expected top-level JSON object in {:?}; refusing to overwrite",
+                        cfg_path
+                    ));
+                }
+                parsed
+            }
+        } else {
+            Value::Object(Default::default())
+        };
+
+        let merged = tool.merge(&existing, binary);
+        let mut out = serde_json::to_string_pretty(&merged)
+            .with_context(|| format!("Failed to serialize JSON for {:?}", cfg_path))?;
+        out.push('\n');
+        out
+    };
+
+    atomic_write_with_backup(cfg_path, &serialized)?;
+    Ok(())
+}
+
+pub async fn handle_connect(
+    all: bool,
+    scope: ConnectScope,
+    tool_filter: Option<&str>,
+) -> Result<()> {
     let binary = tool_binary_path();
 
-    let detected: Vec<&Tool> = TOOLS.iter().filter(|t| (t.detect)()).collect();
+    let detected: Vec<&Tool> = if let Some(filter_id) = tool_filter {
+        let found: Vec<&Tool> = TOOLS.iter().filter(|t| t.id == filter_id).collect();
+        if found.is_empty() {
+            let valid: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();
+            return Err(anyhow!(
+                "Unknown tool '{}'. Valid tool IDs: {}",
+                filter_id,
+                valid.join(", ")
+            ));
+        }
+        found
+    } else {
+        TOOLS.iter().filter(|t| (t.detect)()).collect()
+    };
 
     if detected.is_empty() {
         println!("No compatible AI tools detected.");
         return Ok(());
     }
 
-    let selected: Vec<&Tool> = if all {
-        detected
-    } else {
+    if !all && tool_filter.is_none() {
         println!("Detected AI tools:\n");
         for (i, tool) in detected.iter().enumerate() {
-            println!("  {}. {}", i + 1, tool.name);
+            let target = tool
+                .preferred_path(scope)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "(user scope only)".to_string());
+            println!("  {}. {} [{}] -> {}", i + 1, tool.name, tool.id, target);
         }
-        println!("\nRun `contextd connect --all` to configure all detected tools.");
-        println!("Or configure individual tools via their config files.");
+        println!("\nRun `contextd connect --all` to configure all detected tools (user scope).");
+        println!("Use `--scope project` for project-local configs or `--tool <id>` for one tool.");
         return Ok(());
-    };
+    }
 
     let mut configured = 0u32;
-    for tool in selected {
-        let paths = (tool.config_paths)();
-        for cfg_path in &paths {
-            if let Some(parent) = cfg_path.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create directory {:?}", parent))?;
+    let mut errors = Vec::new();
+
+    for tool in detected {
+        let Some(cfg_path) = tool.preferred_path(scope) else {
+            println!(
+                "  - {} skipped (not applicable for {:?} scope)",
+                tool.name, scope
+            );
+            continue;
+        };
+
+        match configure_tool_at_path(tool, &cfg_path, &binary) {
+            Ok(()) => {
+                configured += 1;
+                println!("  ✓ {} configured at {:?}", tool.name, cfg_path);
             }
-
-            let is_toml = cfg_path.extension().and_then(|e| e.to_str()) == Some("toml");
-
-            let existing: Value = match fs::read_to_string(cfg_path) {
-                Ok(content) => {
-                    if is_toml {
-                        toml::from_str(&content)
-                            .unwrap_or_else(|_| Value::Object(Default::default()))
-                    } else {
-                        serde_json::from_str(&content)
-                            .unwrap_or_else(|_| Value::Object(Default::default()))
-                    }
-                }
-                Err(_) => Value::Object(Default::default()),
-            };
-
-            let merged = tool.merge(&existing, &binary);
-
-            let serialized = if is_toml {
-                toml::to_string_pretty(&merged)
-                    .with_context(|| format!("Failed to serialize TOML for {:?}", cfg_path))?
-            } else {
-                serde_json::to_string_pretty(&merged)
-                    .with_context(|| format!("Failed to serialize JSON for {:?}", cfg_path))?
-            };
-
-            fs::write(cfg_path, &serialized)
-                .with_context(|| format!("Failed to write config to {:?}", cfg_path))?;
-            configured += 1;
-            println!("  ✓ {} configured at {:?}", tool.name, cfg_path);
+            Err(err) => {
+                eprintln!("  ✗ {} skipped ({:?}): {}", tool.name, cfg_path, err);
+                errors.push((tool.name, err));
+            }
         }
     }
 
@@ -310,6 +476,14 @@ pub async fn handle_connect(all: bool) -> Result<()> {
         configured,
         if configured == 1 { "" } else { "s" }
     );
+
+    if !errors.is_empty() {
+        return Err(anyhow!(
+            "{} tool config(s) could not be updated safely (existing files were preserved)",
+            errors.len()
+        ));
+    }
+
     Ok(())
 }
 
@@ -318,13 +492,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tool_trait_exists() {
-        assert!(!TOOLS.is_empty());
+    fn test_tool_registry() {
         assert_eq!(TOOLS.len(), 9);
-    }
-
-    #[test]
-    fn test_tool_ids_are_unique() {
         let ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();
         let mut sorted = ids.clone();
         sorted.sort();
@@ -377,64 +546,81 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_array_replaces_existing() {
-        let tool = &TOOLS[6]; // continue
-        let existing = json!({
-            "mcpServers": [
-                { "name": "contextd", "command": "/old/path" },
-                { "name": "other", "command": "foo" }
-            ]
-        });
-        let merged = tool.merge(&existing, "/new/path");
-        let arr = merged["mcpServers"].as_array().unwrap();
-        assert_eq!(arr.len(), 2);
+    fn test_jsonc_comments_and_trailing_commas_and_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("opencode.jsonc");
+        let original = r#"{
+  // User comment
+  "theme": "dark",
+  "mcp": {
+    "other": { "type": "local", "command": ["other"], },
+  },
+}"#;
+        fs::write(&cfg_path, original).unwrap();
+
+        let opencode = TOOLS.iter().find(|t| t.id == "opencode").unwrap();
+        configure_tool_at_path(opencode, &cfg_path, "/usr/local/bin/contextd").unwrap();
+
+        // Backup must exist with original contents
+        let bak_path = dir.path().join("opencode.jsonc.bak");
+        assert!(bak_path.exists());
+        assert_eq!(fs::read_to_string(&bak_path).unwrap(), original);
+
+        // Merged config must preserve existing entries AND add contextd
+        let updated: Value = serde_json::from_str(&fs::read_to_string(&cfg_path).unwrap()).unwrap();
+        assert_eq!(updated["theme"], "dark");
+        assert_eq!(updated["mcp"]["other"]["command"][0], "other");
         assert_eq!(
-            arr.iter().find(|v| v["name"] == "contextd").unwrap()["command"],
-            "/new/path"
+            updated["mcp"]["contextd"]["command"][0],
+            "/usr/local/bin/contextd"
         );
     }
 
     #[test]
-    fn test_merge_preserves_other_keys() {
-        let tool = &TOOLS[0]; // claude-desktop
-        let existing = json!({
-            "other_setting": "value",
-            "mcpServers": {}
-        });
-        let merged = tool.merge(&existing, "contextd");
-        assert_eq!(merged["other_setting"], "value");
+    fn test_corrupt_json_aborts_without_overwriting() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("mcp.json");
+        let corrupt = "{ not valid json at all";
+        fs::write(&cfg_path, corrupt).unwrap();
+
+        let cursor = TOOLS.iter().find(|t| t.id == "cursor").unwrap();
+        let res = configure_tool_at_path(cursor, &cfg_path, "/usr/bin/contextd");
+        assert!(res.is_err());
+        // Existing file MUST remain untouched
+        assert_eq!(fs::read_to_string(&cfg_path).unwrap(), corrupt);
     }
 
     #[test]
-    fn test_generate_config_all_tools() {
-        for tool in TOOLS {
-            let config = (tool.generate_config)("contextd");
-            assert!(
-                config.is_object(),
-                "{} generate_config must return object",
-                tool.id
-            );
-        }
-    }
+    fn test_toml_preserves_comments_and_aborts_on_corrupt() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        let original =
+            "# My Codex config\nmodel = \"o3\"\n\n[mcp_servers.existing]\ncommand = \"foo\"\n";
+        fs::write(&cfg_path, original).unwrap();
 
-    #[test]
-    fn test_detect_no_false_positives() {
-        // Detection functions should not panic for any tool
-        for tool in TOOLS {
-            let _ = (tool.detect)();
-        }
+        let codex = TOOLS.iter().find(|t| t.id == "codex").unwrap();
+        configure_tool_at_path(codex, &cfg_path, "/usr/bin/contextd").unwrap();
+
+        let updated = fs::read_to_string(&cfg_path).unwrap();
+        assert!(updated.contains("# My Codex config"));
+        assert!(updated.contains("model = \"o3\""));
+        assert!(updated.contains("[mcp_servers.existing]"));
+        assert!(updated.contains("[mcp_servers.contextd]"));
+        assert!(updated.contains("/usr/bin/contextd"));
+
+        // Corrupt TOML must fail without modifying file
+        let bad_path = dir.path().join("bad.toml");
+        let bad_toml = "[broken = ";
+        fs::write(&bad_path, bad_toml).unwrap();
+        assert!(configure_tool_at_path(codex, &bad_path, "/usr/bin/contextd").is_err());
+        assert_eq!(fs::read_to_string(&bad_path).unwrap(), bad_toml);
     }
 
     #[test]
     fn test_binary_in_path() {
-        // sh should always be in PATH on Unix
         if cfg!(unix) {
             assert!(binary_in_path("sh"));
         }
-    }
-
-    #[test]
-    fn test_binary_in_path_not_found() {
         assert!(!binary_in_path("this_binary_does_not_exist_xyz123"));
     }
 }
