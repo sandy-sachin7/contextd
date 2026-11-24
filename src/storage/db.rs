@@ -781,16 +781,16 @@ impl Database {
     pub fn get_stats(&self) -> Result<DbStats> {
         let conn = self.read_conn()?;
 
-        let file_count: u64 = conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
-        let chunk_count: u64 =
+        let file_count: i64 = conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
+        let chunk_count: i64 =
             conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
-        let page_count: u64 = conn.query_row("PRAGMA page_count", [], |row| row.get(0))?;
-        let page_size: u64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))?;
-        let db_size = page_count * page_size;
+        let page_count: i64 = conn.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+        let page_size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        let db_size = (page_count * page_size) as u64;
 
         Ok(DbStats {
-            file_count,
-            chunk_count,
+            file_count: file_count as u64,
+            chunk_count: chunk_count as u64,
             db_size,
         })
     }

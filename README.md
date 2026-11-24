@@ -10,7 +10,7 @@
   [![Crates.io](https://img.shields.io/crates/v/contextd.svg)](https://crates.io/crates/contextd)
   [![Docker GHCR](https://img.shields.io/badge/ghcr.io-contextd-2496ED?logo=docker&logoColor=white)](https://github.com/sandy-sachin7/contextd/pkgs/container/contextd)
   [![Docs](https://img.shields.io/badge/docs-mdBook-blue)](https://sandy-sachin7.github.io/contextd/)
-  [![MSRV](https://img.shields.io/badge/MSRV-Rust%201.91%2B-orange?logo=rust)](Cargo.toml)
+  [![MSRV](https://img.shields.io/badge/MSRV-Rust%201.95%2B-orange?logo=rust)](Cargo.toml)
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 </div>
 
@@ -42,7 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/sandy-sachin7/contextd/main/scripts
 curl -fsSL https://raw.githubusercontent.com/sandy-sachin7/contextd/main/scripts/install.sh | bash
 ```
 
-**Cargo (Crates.io, requires Rust 1.91+):**
+**Cargo (Crates.io, requires Rust 1.95+):**
 ```bash
 cargo install contextd --locked
 ```

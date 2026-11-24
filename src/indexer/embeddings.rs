@@ -1,23 +1,22 @@
 use anyhow::{anyhow, Context, Result};
-use ort::environment::Environment;
 use ort::session::{builder::GraphOptimizationLevel, Session};
-use ort::value::{TensorElementType, Value, ValueType};
+use ort::tensor::TensorElementType;
+use ort::value::{Value, ValueType};
 use std::sync::{Arc, Mutex, OnceLock};
 use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 
-static ORT_ENV: OnceLock<Environment> = OnceLock::new();
+static ORT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 
-fn ort_environment() -> Result<&'static Environment> {
-    if let Some(env) = ORT_ENV.get() {
-        return Ok(env);
-    }
-    let env = ort::init()
-        .build()
-        .map_err(|e| anyhow!("Failed to initialize ONNX Runtime environment: {}", e))?;
-    let _ = ORT_ENV.set(env);
-    ORT_ENV
-        .get()
-        .ok_or_else(|| anyhow!("ONNX Runtime environment not initialized"))
+fn ort_environment() -> Result<()> {
+    ORT_INIT
+        .get_or_init(|| {
+            ort::init()
+                .commit()
+                .map(|_| ())
+                .map_err(|e| format!("Failed to initialize ONNX Runtime environment: {e}"))
+        })
+        .clone()
+        .map_err(anyhow::Error::msg)
 }
 
 use crate::config::StorageConfig;
@@ -142,8 +141,8 @@ impl Embedder {
             .map(|n| n.get().min(4))
             .unwrap_or(2);
 
-        let env = ort_environment()?;
-        let session = Session::builder(env)
+        ort_environment()?;
+        let session = Session::builder()
             .map_err(|e| anyhow!("ONNX SessionBuilder creation failed: {}", e))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|e| anyhow!("ONNX optimization level failed: {}", e))?
@@ -154,9 +153,9 @@ impl Embedder {
 
         // Dynamically inspect ONNX inputs & outputs
         let expects_token_type_ids = session
-            .inputs()
+            .inputs
             .iter()
-            .any(|input| input.name() == "token_type_ids");
+            .any(|input| input.name == "token_type_ids");
 
         let (output_name, inferred_dim) = inspect_output_spec(&session, spec.expected_dim);
 
@@ -288,14 +287,14 @@ impl TextEmbedder for Embedder {
 
 fn inspect_output_spec(session: &Session, fallback_dim: usize) -> (String, usize) {
     let output = session
-        .outputs()
+        .outputs
         .iter()
-        .find(|o| o.name() == "last_hidden_state")
-        .or_else(|| session.outputs().first());
+        .find(|o| o.name == "last_hidden_state")
+        .or_else(|| session.outputs.first());
 
     match output {
         Some(outlet) => {
-            let dim = match outlet.dtype() {
+            let dim = match &outlet.output_type {
                 ValueType::Tensor {
                     ty: TensorElementType::Float32,
                     shape,
@@ -308,7 +307,7 @@ fn inspect_output_spec(session: &Session, fallback_dim: usize) -> (String, usize
                     .unwrap_or(fallback_dim),
                 _ => fallback_dim,
             };
-            (outlet.name().to_string(), dim)
+            (outlet.name.clone(), dim)
         }
         None => ("last_hidden_state".to_string(), fallback_dim),
     }

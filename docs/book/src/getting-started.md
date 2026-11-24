@@ -8,7 +8,7 @@
 curl -fsSL https://raw.githubusercontent.com/sandy-sachin7/contextd/main/scripts/install.sh | bash
 ```
 
-### Cargo (Crates.io, Rust 1.91+)
+### Cargo (Crates.io, Rust 1.95+)
 
 ```bash
 cargo install contextd --locked

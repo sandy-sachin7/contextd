@@ -23,7 +23,7 @@ jobs:
             os: ubuntu-latest
             name: contextd-linux-aarch64
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-15-intel
             name: contextd-macos-x86_64
           - target: aarch64-apple-darwin
             os: macos-latest
