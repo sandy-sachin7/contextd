@@ -31,7 +31,7 @@ tower = { version = "0.4", features = ["util", "limit", "timeout"] }
 tower-http = { version = "0.5", features = ["limit", "timeout"] }
 # Pinned: ort-sys 2.0.0-rc.15 dropped x86_64-apple-darwin prebuilt ONNX Runtime
 # binaries, which breaks the Intel macOS release target. rc.10 still ships them.
-ort = { version = "=2.0.0-rc.10", features = ["ndarray"] }
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["ndarray", "download-binaries", "std", "tracing"] }
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
 pdf-extract = "0.12"
 toml = "0.9.8"

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security & Compatibility
 - Upgraded `rusqlite` to 0.42 and `r2d2_sqlite` to 0.37, moving `libsqlite3-sys` to 0.40 and clearing `RUSTSEC-2026-0459`.
-- Pinned `ort` to 2.0.0-rc.10 so the x86_64-apple-darwin release again finds prebuilt ONNX Runtime binaries; adapted embedding code to that API.
+- Pinned `ort` to 2.0.0-rc.10 so the x86_64-apple-darwin release again finds prebuilt ONNX Runtime binaries; adapted embedding code to that API. Disabled `copy-dylibs` because ort-sys rc.10 fails to copy DirectML.dll on Windows; the static ONNX Runtime link is unaffected.
 - Raised MSRV to Rust 1.95 and switched the Intel macOS release job to a native `macos-15-intel` runner.
 
 ## [4.0.0] - 2026-11-24
