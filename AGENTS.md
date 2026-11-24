@@ -2,7 +2,7 @@
 
 ## Project Context
 
-`contextd` (v4.0.0) is a local-first, privacy-preserving semantic context daemon and Rust library for AI agents. It watches local files, chunks them with Tree-sitter/Markdown/PDF/sandboxed plugins, embeds them via batched ONNX Runtime, stores them in SQLite WAL (`sqlite-vec` KNN + `FTS5`), and serves hybrid search over MCP stdio, hardened Axum HTTP, and CLI.
+`contextd` (v4.0.1) is a local-first, privacy-preserving semantic context daemon and Rust library for AI agents. It watches local files, chunks them with Tree-sitter/Markdown/PDF/sandboxed plugins, embeds them via batched ONNX Runtime, stores them in SQLite WAL (`sqlite-vec` KNN + `FTS5`), and serves hybrid search over MCP stdio, hardened Axum HTTP, and CLI.
 
 ## Repository
 
