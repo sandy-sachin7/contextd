@@ -99,10 +99,15 @@ jobs:
           sha256sum contextd-* > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          awk '/^## /{ if (found) exit; found=1 } found { print }' CHANGELOG.md > release_notes.md
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
+          body_path: release_notes.md
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
