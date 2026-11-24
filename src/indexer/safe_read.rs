@@ -136,8 +136,10 @@ fn open_beneath(root: &Path, relative: &Path) -> Result<File> {
 /// same normalization as the handle and expected paths before `starts_with`.
 #[cfg(windows)]
 fn windows_handle_matches(actual: &Path, expected: &Path, root: &Path) -> bool {
+    let normalized_actual = normalize_windows_path(actual);
     let normalized_root = normalize_windows_path(root);
-    actual.starts_with(&normalized_root) && same_windows_path(actual, expected)
+    normalized_actual.starts_with(&normalized_root)
+        && same_windows_path(&normalized_actual, &normalize_windows_path(expected))
 }
 
 #[cfg(windows)]

@@ -109,6 +109,7 @@ mod tests {
     use std::fs;
     use tempfile::NamedTempFile;
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_run_parser_echo() {
         let cmd = vec!["echo".to_string(), "-n".to_string(), "hello".to_string()];
@@ -118,6 +119,7 @@ mod tests {
         assert!(output.contains("hello"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_run_parser_fail() {
         let cmd = vec!["false".to_string()];
@@ -125,6 +127,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_plugin_timeout() {
         let cmd = vec!["sh".to_string(), "-c".to_string(), "sleep 10".to_string()];
@@ -144,6 +147,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_plugin_output_size_cap() {
         let cmd = vec![
@@ -163,6 +167,7 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("exceeded"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_plugin_large_output() {
         let cmd = vec![
@@ -176,6 +181,7 @@ mod tests {
         assert!(result.unwrap().len() > 100_000);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_plugin_flag_injection_protected() {
         // File starting with `-n` should not be interpreted as a flag by `cat`
@@ -187,6 +193,7 @@ mod tests {
         assert_eq!(out, "safe content");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_plugin_binary_output() {
         let temp_file = NamedTempFile::new().unwrap();

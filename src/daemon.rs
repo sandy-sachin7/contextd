@@ -20,19 +20,27 @@ use tokio::task::JoinSet;
 
 const BINARY_SNIFF_BYTES: usize = 8192;
 
-/// Canonicalize a path even when the leaf file does not exist yet (e.g., new DB file).
+/// Canonicalize a path even when some of its components do not exist yet.
+/// Walk up to the nearest existing ancestor so that paths under a new model
+/// directory resolve the same way as paths under an existing one.
 pub fn normalize_path(path: &Path) -> PathBuf {
     if let Ok(canon) = fs::canonicalize(path) {
         return canon;
     }
-    if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
-        let base = if parent.as_os_str().is_empty() {
-            Path::new(".")
-        } else {
-            parent
+    let mut current = path;
+    let mut tail = Vec::new();
+    while let Some(name) = current.file_name() {
+        tail.push(name.to_os_string());
+        current = match current.parent() {
+            Some(parent) => parent,
+            None => break,
         };
-        if let Ok(canon_parent) = fs::canonicalize(base) {
-            return canon_parent.join(name);
+        if let Ok(canon) = fs::canonicalize(current) {
+            let mut result = canon;
+            for part in tail.iter().rev() {
+                result.push(part);
+            }
+            return result;
         }
     }
     path.to_path_buf()
