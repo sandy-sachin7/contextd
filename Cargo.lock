@@ -509,6 +509,7 @@ dependencies = [
  "ignore",
  "indicatif",
  "json5",
+ "libc",
  "notify",
  "notify-debouncer-mini",
  "ort",
@@ -534,6 +535,7 @@ dependencies = [
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

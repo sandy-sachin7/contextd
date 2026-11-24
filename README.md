@@ -21,7 +21,7 @@
 - 🔍 **Hybrid Search** - Combines `sqlite-vec` KNN semantic embeddings with tokenized SQLite FTS5 keyword search (normalized RRF) across CLI, HTTP API, and MCP
 - ⚡ **Concurrent WAL Storage** - Dedicated WAL read-only connection pool + transactional writes and batched ONNX inference
 - 🌍 **Polyglot** - Tree-sitter semantic chunking for Rust, Python, JS/JSX, TS/TSX, Go, plus Markdown and PDF
-- 🛡️ **Secure by Default** - DNS-rebinding protection, optional bearer auth, secret/binary file exclusions, SHA-256 verified model downloads, and workspace plugin trust gating
+- 🛡️ **Secure by Default** - DNS-rebinding protection, optional bearer auth, secret/binary file exclusions, SHA-256 verified model downloads, and workspace config trust gating
 
 ## Quick Start
 

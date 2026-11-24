@@ -6,11 +6,12 @@ use serde_json::{json, Value};
 use std::io::ErrorKind;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const LATEST_PROTOCOL_VERSION: &str = "2025-06-18";
 const MAX_LIMIT: usize = 100;
+const MAX_MCP_LINE_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 struct JsonRpcResponse {
@@ -654,15 +655,35 @@ pub async fn run_mcp_server(db: Database, embedder: Arc<dyn TextEmbedder>, confi
     );
 
     let stdin = tokio::io::stdin();
-    let mut reader = BufReader::new(stdin).lines();
+    let mut reader = BufReader::new(stdin);
     let mut stdout = tokio::io::stdout();
 
-    while let Ok(Some(line)) = reader.next_line().await {
+    loop {
+        // Read at most one byte over the cap. An oversized frame is discarded
+        // up to its newline, so a client cannot exhaust memory with one line.
+        let mut buf = Vec::new();
+        let mut limited = (&mut reader).take(MAX_MCP_LINE_BYTES + 1);
+        let read = limited.read_until(b'\n', &mut buf).await.unwrap_or(0);
+        drop(limited);
+        if read == 0 {
+            break;
+        }
+        if !buf.ends_with(b"\n") {
+            let mut discarded = Vec::new();
+            let _ = reader.read_until(b'\n', &mut discarded).await;
+            eprintln!("Dropping oversized MCP request line");
+            continue;
+        }
+        buf.pop();
+        let Ok(line) = std::str::from_utf8(&buf) else {
+            eprintln!("Dropping MCP request line that is not valid UTF-8");
+            continue;
+        };
         if line.trim().is_empty() {
             continue;
         }
 
-        if let Some(mut resp_json) = server.handle_raw_line(&line).await {
+        if let Some(mut resp_json) = server.handle_raw_line(line).await {
             resp_json.push('\n');
             if let Err(e) = stdout.write_all(resp_json.as_bytes()).await {
                 if e.kind() == ErrorKind::BrokenPipe {

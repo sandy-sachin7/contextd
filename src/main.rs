@@ -49,7 +49,19 @@ async fn main() -> anyhow::Result<()> {
         }
         cli::Commands::Mcp => {
             eprintln!("contextd starting in MCP mode...");
-            if !contextd::download::model_files_exist(&config.storage.model_path) {
+            // Migrate legacy flat caches before the existence check so an
+            // upgrade does not require a separate setup or daemon run. Never
+            // download here: stdout carries JSON-RPC frames.
+            if let Err(err) = contextd::download::migrate_legacy_model_cache(
+                &config.storage.model_path,
+                &config.storage.model_type,
+            ) {
+                eprintln!("Legacy model cache migration failed: {}", err);
+            }
+            if !contextd::download::model_files_exist(
+                &config.storage.model_path,
+                &config.storage.model_type,
+            ) {
                 eprintln!(
                     "Models not found in {:?}. Run 'contextd setup' or 'contextd daemon' first.",
                     config.storage.model_path

@@ -111,7 +111,7 @@ pub struct Embedder {
 impl Embedder {
     pub fn new(config: &StorageConfig) -> Result<Self> {
         let spec = lookup_model_spec(&config.model_type)?;
-        let model_dir = &config.model_path;
+        let model_dir = crate::download::model_cache_dir(&config.model_path, &config.model_type);
 
         let tokenizer_path = model_dir.join("tokenizer.json");
         let model_path = model_dir.join("model.onnx");
@@ -452,7 +452,7 @@ mod tests {
     #[test]
     #[ignore] // Requires model files on disk
     fn test_embedder_inference() {
-        let model_dir = "models";
+        let model_dir = "models/all-minilm-l6-v2";
         if !Path::new(model_dir).exists() {
             return;
         }

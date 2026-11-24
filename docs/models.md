@@ -12,6 +12,8 @@ contextd supports multiple local ONNX embedding models for different speed/quali
 
 All supported models are downloaded from pinned HuggingFace commit revisions and verified with SHA-256 checksums before installation.
 
+Each model uses its own subdirectory under `model_path`. A model switch loads the selected model's files and keeps the other model caches.
+
 ## Configuration
 
 Set the model in your `contextd.toml` (or via `CONTEXTD_MODEL_TYPE`):

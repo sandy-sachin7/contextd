@@ -493,8 +493,12 @@ pub fn chunk_text(content: &str) -> Result<Vec<Chunk>> {
 
 pub fn chunk_pdf(path: &std::path::Path) -> Result<Vec<Chunk>> {
     let bytes = std::fs::read(path)?;
+    chunk_pdf_bytes(&bytes, path)
+}
+
+pub fn chunk_pdf_bytes(bytes: &[u8], path: &std::path::Path) -> Result<Vec<Chunk>> {
     let extracted = catch_unwind(AssertUnwindSafe(|| {
-        pdf_extract::extract_text_from_mem(&bytes)
+        pdf_extract::extract_text_from_mem(bytes)
     }))
     .map_err(|_| anyhow!("PDF parser panicked while reading {:?}", path))??;
 

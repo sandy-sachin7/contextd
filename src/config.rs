@@ -212,14 +212,6 @@ impl Config {
             if local.exists() {
                 let mut cfg = Self::load(&local)?;
                 cfg.is_workspace_config = true;
-                // Check whether user-global config explicitly enables workspace plugins
-                if !cfg.security.allow_workspace_plugins && user_cfg.exists() {
-                    if let Ok(global_cfg) = Self::load(&user_cfg) {
-                        if global_cfg.security.allow_workspace_plugins {
-                            cfg.security.allow_workspace_plugins = true;
-                        }
-                    }
-                }
                 cfg
             } else if user_cfg.exists() {
                 let mut cfg = Self::load(&user_cfg)?;
@@ -230,6 +222,31 @@ impl Config {
             }
         };
 
+        let global = if default_config_path().exists() {
+            Self::load(&default_config_path()).ok()
+        } else {
+            None
+        };
+
+        if config.is_workspace_config {
+            // A workspace config is untrusted. It may scope watching and chunking
+            // for its own tree, but it must not grant itself plugin execution,
+            // network exposure, or a different data location.
+            match &global {
+                Some(g) => {
+                    config.server = g.server.clone();
+                    config.storage = g.storage.clone();
+                }
+                None => {
+                    config.server = ServerConfig::default();
+                    config.storage = StorageConfig::default();
+                }
+            }
+            config.security.allow_workspace_plugins = global
+                .as_ref()
+                .map(|g| g.security.allow_workspace_plugins)
+                .unwrap_or(false);
+        }
         if trust_workspace_plugins {
             config.security.allow_workspace_plugins = true;
         }
@@ -393,5 +410,71 @@ db_path = "partial.db"
         cfg.is_workspace_config = false;
         cfg.security.allow_workspace_plugins = false;
         assert!(cfg.plugins_allowed());
+    }
+
+    #[test]
+    fn test_workspace_config_cannot_enable_its_own_plugins() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        writeln!(file, "[security]\nallow_workspace_plugins = true\n")?;
+
+        let config = Config::load_resolved(Some(file.path()), false)?;
+        assert!(config.is_workspace_config);
+        let user_cfg = default_config_path();
+        let globally_trusted = user_cfg.exists()
+            && Config::load(&user_cfg)
+                .map(|c| c.security.allow_workspace_plugins)
+                .unwrap_or(false);
+        assert_eq!(config.security.allow_workspace_plugins, globally_trusted);
+
+        let trusted = Config::load_resolved(Some(file.path()), true)?;
+        assert!(trusted.plugins_allowed());
+        Ok(())
+    }
+
+    #[test]
+    fn test_workspace_config_cannot_set_server_or_storage() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        writeln!(
+            file,
+            r#"
+[server]
+host = "0.0.0.0"
+port = 9999
+auth_token = "attacker-token"
+
+[storage]
+db_path = "attacker.db"
+model_path = "attacker-models"
+
+[watch]
+paths = ["src"]
+debounce_ms = 123
+"#
+        )?;
+
+        let config = Config::load_resolved(Some(file.path()), false)?;
+        assert!(config.is_workspace_config);
+
+        let user_cfg = default_config_path();
+        let (expected_server, expected_storage) = if user_cfg.exists() {
+            match Config::load(&user_cfg) {
+                Ok(global) => (global.server, global.storage),
+                Err(_) => (ServerConfig::default(), StorageConfig::default()),
+            }
+        } else {
+            (ServerConfig::default(), StorageConfig::default())
+        };
+
+        assert_eq!(config.server.host, expected_server.host);
+        assert_eq!(config.server.port, expected_server.port);
+        assert_eq!(config.server.auth_token, expected_server.auth_token);
+        assert_eq!(config.storage.db_path, expected_storage.db_path);
+        assert_eq!(config.storage.model_path, expected_storage.model_path);
+        assert_eq!(config.storage.model_type, expected_storage.model_type);
+
+        // Workspace-scoped sections remain in effect.
+        assert_eq!(config.watch.paths, vec![PathBuf::from("src")]);
+        assert_eq!(config.watch.debounce_ms, 123);
+        Ok(())
     }
 }

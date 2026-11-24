@@ -2,7 +2,7 @@ use crate::api;
 use crate::config::Config;
 use crate::indexer::embeddings::{Embedder, TextEmbedder};
 use crate::indexer::ignore::{is_default_excluded, is_default_ignored_dir_name, IgnoreChecker};
-use crate::indexer::{chunker, plugins, watcher};
+use crate::indexer::{chunker, plugins, safe_read, watcher};
 use crate::storage::db::{ChunkInput, Database, ReindexCheck};
 use anyhow::Result;
 use ignore::WalkBuilder;
@@ -10,6 +10,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use notify_debouncer_mini::DebounceEventResult;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -150,6 +151,13 @@ pub async fn run(config: Config, exit_on_stdin_eof: bool) -> Result<()> {
     run_with_components(config, db, embedder).await
 }
 
+/// Only prune indexed paths that belong to a current watch root and were absent
+/// from the initial scan. Index rows from other roots stay in the shared DB.
+fn should_reconcile_prune(indexed: &str, roots: &[PathBuf], seen: &HashSet<String>) -> bool {
+    let path = Path::new(indexed);
+    roots.iter().any(|root| path.starts_with(root)) && !seen.contains(indexed)
+}
+
 /// Run the daemon loop with pre-initialized `Database` and `TextEmbedder` (also used in tests).
 pub async fn run_with_components(
     config: Config,
@@ -171,6 +179,7 @@ pub async fn run_with_components(
         .iter()
         .map(|p| normalize_path(p))
         .collect();
+    let canonical_watch_roots = Arc::new(canonical_watch_roots);
 
     // 4. Start API Server in background (validating bind config up front)
     let api_db = db.clone();
@@ -229,10 +238,18 @@ pub async fn run_with_components(
             match result {
                 Ok(entry) => {
                     let path = entry.path();
-                    if !path.is_file() {
+                    if entry
+                        .file_type()
+                        .map(|kind| kind.is_symlink())
+                        .unwrap_or(false)
+                        || !path.is_file()
+                    {
                         continue;
                     }
                     let norm_path = normalize_path(path);
+                    if !is_under_watch_root(&norm_path, &canonical_watch_roots) {
+                        continue;
+                    }
                     if excluded.matches(&norm_path) || is_default_excluded(&norm_path, false) {
                         continue;
                     }
@@ -254,13 +271,22 @@ pub async fn run_with_components(
                     let embedder = embedder.clone();
                     let pb = pb.clone();
                     let plugin_warned = plugin_warned.clone();
+                    let watch_roots = canonical_watch_roots.clone();
 
                     scan_tasks.spawn(async move {
                         pb.set_message(format!(
                             "Indexing {:?}",
                             norm_path.file_name().unwrap_or_default()
                         ));
-                        index_file(norm_path, config, db, embedder, plugin_warned).await;
+                        index_file_with_roots(
+                            norm_path,
+                            config,
+                            db,
+                            embedder,
+                            plugin_warned,
+                            watch_roots.as_ref().clone(),
+                        )
+                        .await;
                         drop(permit);
                         pb.inc(1);
                     });
@@ -284,10 +310,7 @@ pub async fn run_with_components(
         let indexed_paths = reconcile_db.list_indexed_paths()?;
         let mut removed = 0usize;
         for indexed in indexed_paths {
-            let p = Path::new(&indexed);
-            let under_watch = roots_for_reconcile.iter().any(|r| p.starts_with(r));
-            if under_watch
-                && !seen_for_reconcile.contains(&indexed)
+            if should_reconcile_prune(&indexed, &roots_for_reconcile, &seen_for_reconcile)
                 && reconcile_db.delete_file_by_path(&indexed)?
             {
                 removed += 1;
@@ -325,38 +348,53 @@ pub async fn run_with_components(
                 match result {
                     Ok(events) => {
                         let mut unique_paths = HashSet::new();
-                        for event in events {
-                            unique_paths.insert(normalize_path(&event.path));
+                        let mut symlink_paths = HashSet::new();
+                        let event_paths: HashSet<PathBuf> =
+                            events.into_iter().map(|event| event.path).collect();
+                        for event_path in event_paths {
+                            if is_symlink(&event_path) {
+                                symlink_paths
+                                    .insert(normalize_path_without_final_component(&event_path));
+                            } else {
+                                unique_paths.insert(normalize_path(&event_path));
+                            }
+                        }
+
+                        for path in symlink_paths {
+                            if !is_under_watch_root(&path, &canonical_watch_roots) {
+                                continue;
+                            }
+                            schedule_index_path(
+                                path,
+                                coordinator.clone(),
+                                semaphore.clone(),
+                                config.clone(),
+                                db.clone(),
+                                embedder.clone(),
+                                plugin_warned.clone(),
+                                canonical_watch_roots.clone(),
+                            );
                         }
 
                         for path in unique_paths {
+                            if !is_under_watch_root(&path, &canonical_watch_roots) {
+                                continue;
+                            }
                             if excluded.matches(&path) {
                                 continue;
                             }
 
                             if !path.exists() {
-                                // File or directory was deleted / moved away — prune from DB
-                                let db_del = db.clone();
-                                let path_str = path.to_string_lossy().to_string();
-                                tokio::spawn(async move {
-                                    let res = tokio::task::spawn_blocking(move || -> Result<usize> {
-                                        let mut removed = 0usize;
-                                        if db_del.delete_file_by_path(&path_str)? {
-                                            removed += 1;
-                                        }
-                                        removed += db_del.delete_files_under_prefix(&path_str)?;
-                                        Ok(removed)
-                                    })
-                                    .await;
-                                    match res {
-                                        Ok(Ok(n)) if n > 0 => {
-                                            println!("Pruned {} deleted path(s) for {:?}", n, path);
-                                        }
-                                        Ok(Err(e)) => eprintln!("Error pruning {:?}: {}", path, e),
-                                        Err(e) => eprintln!("Prune task error: {}", e),
-                                        _ => {}
-                                    }
-                                });
+                                schedule_index_path(
+                                    path,
+                                    coordinator.clone(),
+                                    semaphore.clone(),
+                                    config.clone(),
+                                    db.clone(),
+                                    embedder.clone(),
+                                    plugin_warned.clone(),
+                                    canonical_watch_roots.clone(),
+                                );
                                 continue;
                             }
 
@@ -377,8 +415,12 @@ pub async fn run_with_components(
                                     .add_custom_ignore_filename(".contextignore")
                                     .build();
                                 for entry in walker.flatten() {
+                                    if entry.file_type().map(|kind| kind.is_symlink()).unwrap_or(false) {
+                                        continue;
+                                    }
                                     let p = normalize_path(entry.path());
-                                    if p.is_file()
+                                    if is_under_watch_root(&p, &canonical_watch_roots)
+                                        && p.is_file()
                                         && !excluded.matches(&p)
                                         && !is_default_excluded(&p, false)
                                         && !ignore_checkers.iter().any(|c| c.is_ignored(&p, false))
@@ -391,6 +433,7 @@ pub async fn run_with_components(
                                             db.clone(),
                                             embedder.clone(),
                                             plugin_warned.clone(),
+                                            canonical_watch_roots.clone(),
                                         );
                                     }
                                 }
@@ -405,6 +448,7 @@ pub async fn run_with_components(
                                 db.clone(),
                                 embedder.clone(),
                                 plugin_warned.clone(),
+                                canonical_watch_roots.clone(),
                             );
                         }
                     }
@@ -418,6 +462,7 @@ pub async fn run_with_components(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn schedule_index_path(
     path: PathBuf,
     coordinator: Arc<PathCoordinator>,
@@ -426,6 +471,7 @@ fn schedule_index_path(
     db: Database,
     embedder: Arc<dyn TextEmbedder>,
     plugin_warned: Arc<AtomicBool>,
+    watch_roots: Arc<Vec<PathBuf>>,
 ) {
     if !coordinator.try_claim(&path) {
         // Already indexing this path; marked dirty so the in-flight task will re-run it.
@@ -437,13 +483,16 @@ fn schedule_index_path(
             let Ok(permit) = semaphore.clone().acquire_owned().await else {
                 break;
             };
-            if path.exists() && path.is_file() {
-                index_file(
+            if !path.exists() || is_symlink(&path) {
+                prune_indexed_path_and_children(&db, &path).await;
+            } else if path.is_file() {
+                index_file_with_roots(
                     path.clone(),
                     config.clone(),
                     db.clone(),
                     embedder.clone(),
                     plugin_warned.clone(),
+                    watch_roots.as_ref().clone(),
                 )
                 .await;
             }
@@ -456,6 +505,29 @@ fn schedule_index_path(
     });
 }
 
+async fn prune_indexed_path_and_children(db: &Database, path: &Path) {
+    let db = db.clone();
+    let path = path.to_string_lossy().to_string();
+    let display_path = path.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<usize> {
+        let mut removed = 0usize;
+        if db.delete_file_by_path(&path)? {
+            removed += 1;
+        }
+        removed += db.delete_files_under_prefix(&path)?;
+        Ok(removed)
+    })
+    .await;
+    match result {
+        Ok(Ok(count)) if count > 0 => {
+            println!("Pruned {} indexed path(s) for {:?}", count, display_path);
+        }
+        Ok(Err(err)) => eprintln!("Failed to prune indexed path {:?}: {}", display_path, err),
+        Err(err) => eprintln!("Failed to prune indexed path {:?}: {}", display_path, err),
+        _ => {}
+    }
+}
+
 fn extract_mtime(meta: &fs::Metadata) -> (u64, i64) {
     match meta
         .modified()
@@ -465,6 +537,46 @@ fn extract_mtime(meta: &fs::Metadata) -> (u64, i64) {
         Some(dur) => (dur.as_secs(), dur.as_nanos().min(i64::MAX as u128) as i64),
         None => (0, 0),
     }
+}
+
+fn is_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+fn normalize_path_without_final_component(path: &Path) -> PathBuf {
+    let (Some(parent), Some(file_name)) = (path.parent(), path.file_name()) else {
+        return path.to_path_buf();
+    };
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    fs::canonicalize(parent)
+        .map(|canonical_parent| canonical_parent.join(file_name))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn is_under_watch_root(path: &Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| path.starts_with(root))
+}
+
+async fn prune_indexed_file(db: &Database, path: &str) {
+    let db = db.clone();
+    let path = path.to_owned();
+    let display_path = path.clone();
+    let result = tokio::task::spawn_blocking(move || db.delete_file_by_path(&path)).await;
+    let error = match result {
+        Ok(Ok(_)) => return,
+        Ok(Err(err)) => err.to_string(),
+        Err(err) => err.to_string(),
+    };
+    eprintln!(
+        "Failed to prune stale index for {:?}: {}",
+        display_path, error
+    );
 }
 
 fn looks_binary(bytes: &[u8]) -> bool {
@@ -479,6 +591,23 @@ pub async fn index_file(
     embedder: Arc<dyn TextEmbedder>,
     plugin_warned: Arc<AtomicBool>,
 ) {
+    let watch_roots: Vec<PathBuf> = config
+        .watch
+        .paths
+        .iter()
+        .map(|root| fs::canonicalize(root).unwrap_or_else(|_| normalize_path(root)))
+        .collect();
+    index_file_with_roots(path, config, db, embedder, plugin_warned, watch_roots).await;
+}
+
+async fn index_file_with_roots(
+    path: PathBuf,
+    config: Arc<Config>,
+    db: Database,
+    embedder: Arc<dyn TextEmbedder>,
+    plugin_warned: Arc<AtomicBool>,
+    watch_roots: Vec<PathBuf>,
+) {
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
@@ -486,16 +615,32 @@ pub async fn index_file(
         .to_lowercase();
     let path_str = path.to_string_lossy().to_string();
 
-    // 1. Metadata & file-size cap check (offloaded to blocking pool)
-    let meta_path = path.clone();
-    let meta_res = tokio::task::spawn_blocking(move || fs::metadata(&meta_path)).await;
-    let metadata = match meta_res {
-        Ok(Ok(m)) => m,
-        _ => return, // File vanished or unreadable
+    // Open once beneath a configured root. Metadata and content use this handle.
+    let open_path = path.clone();
+    let open_res = tokio::task::spawn_blocking(move || {
+        let file = safe_read::open_file_under_roots(&open_path, &watch_roots)?;
+        let metadata = file.metadata()?;
+        Ok::<_, anyhow::Error>((file, metadata))
+    })
+    .await;
+    let (file, metadata) = match open_res {
+        Ok(Ok(opened)) => opened,
+        Ok(Err(err)) => {
+            // Transient open failures (permissions, network FS) must not drop a
+            // valid index row. Deletions and symlink swaps are pruned by the
+            // watcher event handler before this function is called.
+            eprintln!("Failed opening {:?} beneath watch roots: {}", path, err);
+            return;
+        }
+        Err(err) => {
+            eprintln!("Index task failed for {:?}: {}", path, err);
+            return;
+        }
     };
 
     let file_size = metadata.len();
     if file_size > config.watch.max_file_size {
+        prune_indexed_file(&db, &path_str).await;
         return;
     }
 
@@ -530,15 +675,29 @@ pub async fn index_file(
         return;
     }
 
-    // 3. Read raw bytes + blake3 hash check (and binary NUL check for text files)
-    let read_path = path.clone();
-    let raw_bytes = match tokio::task::spawn_blocking(move || fs::read(&read_path)).await {
-        Ok(Ok(bytes)) => bytes,
+    // Read through the same handle and enforce the limit even if the file grows.
+    let max_bytes = config.watch.max_file_size;
+    let read_res = tokio::task::spawn_blocking(move || {
+        let mut bytes = Vec::new();
+        file.take(max_bytes.saturating_add(1))
+            .read_to_end(&mut bytes)?;
+        Ok::<_, std::io::Error>(bytes)
+    })
+    .await;
+    let raw_bytes = match read_res {
+        Ok(Ok(bytes)) if bytes.len() as u64 <= config.watch.max_file_size => bytes,
+        Ok(Ok(_)) => {
+            prune_indexed_file(&db, &path_str).await;
+            return;
+        }
         Ok(Err(e)) => {
             eprintln!("Failed reading {:?}: {}", path, e);
             return;
         }
-        Err(_) => return,
+        Err(e) => {
+            eprintln!("Index task failed reading {:?}: {}", path, e);
+            return;
+        }
     };
 
     let content_hash = blake3::hash(&raw_bytes).to_hex().to_string();
@@ -578,7 +737,27 @@ pub async fn index_file(
 
     let chunks_result = if use_plugin {
         let cmd = plugin_cmd.unwrap();
-        match plugins::run_parser(&cmd, &path).await {
+        let suffix = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| format!(".{ext}"))
+            .unwrap_or_default();
+        let snapshot = match tempfile::Builder::new().suffix(&suffix).tempfile() {
+            Ok(mut snapshot) => {
+                if let Err(error) = snapshot.write_all(&raw_bytes) {
+                    eprintln!("Failed to create parser snapshot for {:?}: {}", path, error);
+                    prune_indexed_file(&db, &path_str).await;
+                    return;
+                }
+                snapshot
+            }
+            Err(error) => {
+                eprintln!("Failed to create parser snapshot for {:?}: {}", path, error);
+                prune_indexed_file(&db, &path_str).await;
+                return;
+            }
+        };
+        match plugins::run_parser(&cmd, snapshot.path()).await {
             Ok(content) => {
                 let ext_clone = ext.clone();
                 match tokio::task::spawn_blocking(move || {
@@ -600,7 +779,7 @@ pub async fn index_file(
     } else if ext == "pdf" {
         let pdf_path = path.clone();
         match tokio::task::spawn_blocking(move || {
-            let raw_chunks = chunker::chunk_pdf(&pdf_path)?;
+            let raw_chunks = chunker::chunk_pdf_bytes(&raw_bytes, &pdf_path)?;
             Ok(chunker::enforce_chunk_budget(
                 raw_chunks,
                 max_chunk_size,
@@ -614,11 +793,15 @@ pub async fn index_file(
         }
     } else {
         if looks_binary(&raw_bytes) {
+            prune_indexed_file(&db, &path_str).await;
             return;
         }
         let content = match String::from_utf8(raw_bytes) {
             Ok(s) => s,
-            Err(_) => return, // Skip non-UTF-8 binary files
+            Err(_) => {
+                prune_indexed_file(&db, &path_str).await;
+                return;
+            }
         };
         let ext_clone = ext.clone();
         match tokio::task::spawn_blocking(move || {
@@ -635,6 +818,7 @@ pub async fn index_file(
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error chunking file {:?}: {}", path, e);
+            prune_indexed_file(&db, &path_str).await;
             return;
         }
     };
@@ -710,8 +894,14 @@ pub async fn index_file(
 
     match res {
         Ok(Ok(count)) => println!("Indexed {} chunks for {:?}", count, path),
-        Ok(Err(e)) => eprintln!("Error indexing {:?}: {}", path, e),
-        Err(e) => eprintln!("Indexing task panicked for {:?}: {}", path, e),
+        Ok(Err(e)) => {
+            eprintln!("Error indexing {:?}: {}", path, e);
+            prune_indexed_file(&db, &path_str).await;
+        }
+        Err(e) => {
+            eprintln!("Indexing task panicked for {:?}: {}", path, e);
+            prune_indexed_file(&db, &path_str).await;
+        }
     }
 }
 
@@ -732,6 +922,28 @@ mod tests {
         assert!(excluded.matches(&dir.path().join("contextd.db-shm")));
         assert!(excluded.matches(&dir.path().join("models/model.onnx")));
         assert!(!excluded.matches(&dir.path().join("src/main.rs")));
+    }
+
+    #[test]
+    fn test_reconcile_keeps_paths_outside_current_watch_roots() {
+        let roots = vec![PathBuf::from("/project-b")];
+        let seen = HashSet::from(["/project-b/src/main.rs".to_string()]);
+
+        assert!(should_reconcile_prune(
+            "/project-b/src/deleted.rs",
+            &roots,
+            &seen
+        ));
+        assert!(!should_reconcile_prune(
+            "/project-a/src/main.rs",
+            &roots,
+            &seen
+        ));
+        assert!(!should_reconcile_prune(
+            "/project-b/src/main.rs",
+            &roots,
+            &seen
+        ));
     }
 
     #[test]

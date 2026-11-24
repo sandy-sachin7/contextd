@@ -9,10 +9,11 @@ const CONTEXTD_BIN: &str = env!("CARGO_BIN_EXE_contextd");
 fn test_ensure_model_files_when_present() {
     let dir = tempfile::tempdir().unwrap();
     let model_path = dir.path().join("models");
-    fs::create_dir_all(&model_path).unwrap();
+    let model_cache = contextd::download::model_cache_dir(&model_path, "all-minilm-l6-v2");
+    fs::create_dir_all(&model_cache).unwrap();
 
-    fs::write(model_path.join("model.onnx"), b"dummy model").unwrap();
-    fs::write(model_path.join("tokenizer.json"), b"{}").unwrap();
+    fs::write(model_cache.join("model.onnx"), b"dummy model").unwrap();
+    fs::write(model_cache.join("tokenizer.json"), b"{}").unwrap();
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(contextd::download::ensure_model_files(
@@ -21,6 +22,25 @@ fn test_ensure_model_files_when_present() {
     ));
     assert!(result.is_ok());
     assert!(!result.unwrap());
+    assert!(contextd::download::model_files_exist(
+        &model_path,
+        "all-minilm-l6-v2"
+    ));
+    assert!(!contextd::download::model_files_exist(
+        &model_path,
+        "all-mpnet-base-v2"
+    ));
+}
+
+#[test]
+fn test_model_cache_isolated_by_model_type() {
+    let root = PathBuf::from("models");
+    let minilm = contextd::download::model_cache_dir(&root, "all-minilm-l6-v2");
+    let mpnet = contextd::download::model_cache_dir(&root, "all-mpnet-base-v2");
+
+    assert_ne!(minilm, mpnet);
+    assert!(minilm.ends_with("all-minilm-l6-v2"));
+    assert!(mpnet.ends_with("all-mpnet-base-v2"));
 }
 
 /// Test that ensure_model_files rejects unknown model types immediately without network access.

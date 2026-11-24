@@ -117,7 +117,10 @@ pub fn parse_timestamp_or_date(input: &str, end_of_day: bool) -> Result<u64> {
 
 pub async fn handle_setup(config: &Config) -> Result<()> {
     println!("Setting up model: {}", config.storage.model_type);
-    println!("Target directory: {:?}", config.storage.model_path);
+    println!(
+        "Target directory: {:?}",
+        crate::download::model_cache_dir(&config.storage.model_path, &config.storage.model_type)
+    );
 
     crate::download::ensure_model_files(&config.storage.model_path, &config.storage.model_type)
         .await?;
