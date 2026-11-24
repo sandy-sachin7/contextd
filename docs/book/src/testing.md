@@ -1,47 +1,36 @@
 # Testing
 
-contextd includes a comprehensive test suite:
+`contextd` includes unit, doctest, integration, MCP end-to-end, benchmark, and memory-stress suites.
 
-## Unit Tests (28+)
+## Test Suites
 
-| Module | Tests | Coverage |
-|--------|-------|----------|
-| config | 2 | Defaults, TOML loading |
-| chunker | 9 | Text, Rust, Python, JS, TS, Go, Markdown, PDF |
-| embeddings | 3 | Creation, inference, dimensions |
-| ignore | 1 | .contextignore patterns |
-| plugins | 8 | Echo, failure, timeout, binary, large output |
-| db | 13 | CRUD, recency, frequency, FTS sanitization |
+| Suite | Command | Coverage |
+|-------|---------|----------|
+| **Unit & Library Tests** | `cargo test --lib --bins --locked` | Config & trust isolation, Tree-sitter/PDF chunking & UTF-8 budgets, `safe_read` (`O_NOFOLLOW`), ignore/secret exclusions, sandboxed plugins, SQLite WAL/`sqlite-vec`/FTS5 hybrid search, HTTP API security middleware, MCP server, `connect`, `download` |
+| **Doc Tests** | `cargo test --doc --locked` | Crate-level embedded library quickstart in `src/lib.rs` |
+| **Integration Tests** | `cargo test --tests --locked` | `watcher_test` (file events/renames/deletes), `load_test` (concurrent HTTP API + rapid edits), `zero_config_test` (model cache & setup) |
+| **Embedded Example** | `cargo run --example embedded_search` | Offline Tree-sitter + SQLite WAL hybrid search library usage |
+| **MCP E2E Suite** | `CONTEXTD_BIN=./target/debug/contextd python3 scripts/test_mcp_local.py` | 17 end-to-end JSON-RPC 2.0 / MCP protocol, validation, cancellation, and edge-case checks |
+| **Memory Stress** | `python3 scripts/memory_stress_test.py` | Large corpus (10K files, 1K queries) memory-bound check |
+| **Benchmarks** | `cargo bench --locked` / `bash scripts/bench.sh` | Criterion benchmarks (`chunker_bench`, `db_bench`) |
 
-## Integration Tests
-
-| File | Tests | What it tests |
-|------|-------|---------------|
-| `watcher_test.rs` | 5 | Rapid file creation, nested directories, renames, deletes, permissions |
-| `load_test.rs` | 3 | 50 concurrent API requests, 100 rapid file changes, sustained load for 30s |
-
-## E2E / Script Tests
-
-| Script | Tests | What it tests |
-|--------|-------|---------------|
-| `test_mcp_local.py` | 25+ | Basic, errors, edge cases (unicode, SQL injection, null bytes), concurrent |
-| `verify_mcp.mjs` | 3 | SDK-based: connect, list tools, call tools |
-| `memory_stress_test.py` | 1 | 10K files, 1K queries, <500MB memory |
-
-## Running Tests
+## Running the Full Verification Suite
 
 ```bash
-# Unit tests
-cargo test --bin contextd
+# Formatting, lints, and rustdoc
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
 
-# Integration tests
-cargo test --test load_test
-cargo test --test watcher_test
+# All Rust tests (unit, doc, integration)
+cargo test --locked
 
-# MCP end-to-end
-python3 scripts/test_mcp_local.py
+# Offline embedded example
+cargo run --example embedded_search
 
-# Memory stress test
-pip install psutil
-python3 scripts/memory_stress_test.py
+# MCP end-to-end tests
+CONTEXTD_BIN=./target/debug/contextd python3 scripts/test_mcp_local.py
+
+# Shell script syntax checks
+bash -n scripts/install.sh scripts/playground.sh scripts/pdftotext.sh
 ```

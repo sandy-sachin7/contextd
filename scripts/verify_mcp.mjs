@@ -8,7 +8,7 @@ async function main() {
   console.log("[Test] Launching contextd...");
   const transport = new StdioClientTransport({
     command: "./target/release/contextd",
-    args: ["--mcp", "--config", "contextd.toml"],
+    args: ["mcp", "--config", "contextd.toml"],
   });
 
   const client = new Client(

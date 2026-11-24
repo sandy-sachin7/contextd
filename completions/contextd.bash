@@ -65,7 +65,7 @@ _contextd() {
 
     case "${cmd}" in
         contextd)
-            opts="-c -h -V --config --trust-workspace-plugins --help --version daemon mcp setup query connect completions help"
+            opts="-c -h -V --config --trust-config --trust-workspace-plugins --help --version daemon mcp setup query connect completions help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -87,7 +87,7 @@ _contextd() {
             return 0
             ;;
         contextd__subcmd__completions)
-            opts="-c -h --config --trust-workspace-plugins --help bash elvish fish powershell zsh"
+            opts="-c -h --config --trust-config --trust-workspace-plugins --help bash elvish fish powershell zsh"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -109,7 +109,7 @@ _contextd() {
             return 0
             ;;
         contextd__subcmd__connect)
-            opts="-c -h --all --scope --tool --config --trust-workspace-plugins --help"
+            opts="-c -h --all --scope --tool --config --trust-config --trust-workspace-plugins --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -139,7 +139,7 @@ _contextd() {
             return 0
             ;;
         contextd__subcmd__daemon)
-            opts="-c -h --exit-on-stdin-eof --config --trust-workspace-plugins --help"
+            opts="-c -h --exit-on-stdin-eof --config --trust-config --trust-workspace-plugins --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -273,7 +273,7 @@ _contextd() {
             return 0
             ;;
         contextd__subcmd__mcp)
-            opts="-c -h --config --trust-workspace-plugins --help"
+            opts="-c -h --config --trust-config --trust-workspace-plugins --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -295,7 +295,7 @@ _contextd() {
             return 0
             ;;
         contextd__subcmd__query)
-            opts="-C -l -c -h --context --limit --min-score --after --before --file-types --paths --config --trust-workspace-plugins --help"
+            opts="-C -l -c -h --context --limit --min-score --after --before --file-types --paths --config --trust-config --trust-workspace-plugins --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -353,7 +353,7 @@ _contextd() {
             return 0
             ;;
         contextd__subcmd__setup)
-            opts="-c -h --config --trust-workspace-plugins --help"
+            opts="-c -h --config --trust-config --trust-workspace-plugins --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

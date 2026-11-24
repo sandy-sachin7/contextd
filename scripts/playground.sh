@@ -111,7 +111,7 @@ ensure_binary() {
 init_model() {
   local config_file="$1"
   header "Ensuring default model (all-MiniLM-L6-v2)"
-  "$BINARY" --config "$config_file" setup
+  "$BINARY" --config "$config_file" --trust-config setup
 }
 
 # ── Index workspace ──────────────────────────────────────────
@@ -123,6 +123,7 @@ index_workspace() {
   echo "  contextd will watch files in: ${workspace}"
   echo
 
+  unset CONTEXTD_AUTH_TOKEN
   export CONTEXTD_HOST="127.0.0.1"
   export CONTEXTD_PORT="3031"
   export CONTEXTD_DB_PATH="${TMPDIR_WORK}/contextd.db"
@@ -133,6 +134,10 @@ index_workspace() {
   escaped_workspace="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$workspace")"
 
   cat > "$config_file" <<-EOF
+[server]
+host = "127.0.0.1"
+port = 3031
+
 [watch]
 paths = [${escaped_workspace}]
 debounce_ms = 500
@@ -141,8 +146,8 @@ EOF
   init_model "$config_file"
 
   info "Starting daemon (indexing in background)..."
-  cmd "CONTEXTD_PORT=${CONTEXTD_PORT} CONTEXTD_DB_PATH=${CONTEXTD_DB_PATH} CONTEXTD_MODEL_PATH=${CONTEXTD_MODEL_PATH} $BINARY --config $config_file daemon &"
-  "$BINARY" --config "$config_file" daemon &
+  cmd "CONTEXTD_DB_PATH=${CONTEXTD_DB_PATH} CONTEXTD_MODEL_PATH=${CONTEXTD_MODEL_PATH} $BINARY --config $config_file --trust-config daemon &"
+  "$BINARY" --config "$config_file" --trust-config daemon &
   DAEMON_PID=$!
 
   echo -n "Waiting for daemon to be ready..."

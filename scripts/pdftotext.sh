@@ -6,7 +6,11 @@
 # last argument, but pdftotext needs the output file ("-" for stdout)
 # to come after the input file.
 
-if [ -z "$1" ]; then
+if [ "${1:-}" = "--" ]; then
+    shift
+fi
+
+if [ -z "${1:-}" ]; then
     echo "Usage: $0 <input.pdf>" >&2
     exit 1
 fi

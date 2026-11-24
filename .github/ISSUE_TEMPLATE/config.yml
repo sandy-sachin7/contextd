@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability Report (Private)
+    url: https://github.com/sandy-sachin7/contextd/security/advisories/new
+    about: Report a security vulnerability privately via GitHub Security Advisories (never open a public issue).
+  - name: Documentation
+    url: https://sandy-sachin7.github.io/contextd/
+    about: Read the contextd user guide, configuration reference, and MCP integration docs.

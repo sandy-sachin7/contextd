@@ -17,7 +17,9 @@ requires `allow_workspace_plugins = true` in the user-global config or the
 
 To change network or storage settings, use the user-global config or an
 environment override below. An explicit `--config <path>` outside the user
-config directory is also treated as untrusted for those sections.
+config directory is also treated as untrusted for those sections unless you
+explicitly pass `--trust-config` (which allows `[server]`, `[storage]`, and
+`[plugins]` from that file).
 
 ## Environment Variable Overrides
 

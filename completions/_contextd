@@ -17,6 +17,7 @@ _contextd() {
     _arguments "${_arguments_options[@]}" : \
 '-c+[Path to the configuration file]:CONFIG:_files' \
 '--config=[Path to the configuration file]:CONFIG:_files' \
+'--trust-config[Explicitly trust an --config file outside the user config directory (allows it to configure \[server\], \[storage\], and \[plugins\])]' \
 '--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -36,6 +37,7 @@ _arguments "${_arguments_options[@]}" : \
 '-c+[Path to the configuration file]:CONFIG:_files' \
 '--config=[Path to the configuration file]:CONFIG:_files' \
 '--exit-on-stdin-eof[Exit automatically when stdin closes (useful when spawned by an editor extension)]' \
+'--trust-config[Explicitly trust an --config file outside the user config directory (allows it to configure \[server\], \[storage\], and \[plugins\])]' \
 '--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -45,6 +47,7 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '-c+[Path to the configuration file]:CONFIG:_files' \
 '--config=[Path to the configuration file]:CONFIG:_files' \
+'--trust-config[Explicitly trust an --config file outside the user config directory (allows it to configure \[server\], \[storage\], and \[plugins\])]' \
 '--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -54,6 +57,7 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '-c+[Path to the configuration file]:CONFIG:_files' \
 '--config=[Path to the configuration file]:CONFIG:_files' \
+'--trust-config[Explicitly trust an --config file outside the user config directory (allows it to configure \[server\], \[storage\], and \[plugins\])]' \
 '--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -72,6 +76,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--paths=[Filter by path substrings (e.g. --paths src/,docs/)]:PATHS:_default' \
 '-c+[Path to the configuration file]:CONFIG:_files' \
 '--config=[Path to the configuration file]:CONFIG:_files' \
+'--trust-config[Explicitly trust an --config file outside the user config directory (allows it to configure \[server\], \[storage\], and \[plugins\])]' \
 '--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -86,6 +91,7 @@ project\:"Configure project-local AI tool settings in the current directory"))' 
 '-c+[Path to the configuration file]:CONFIG:_files' \
 '--config=[Path to the configuration file]:CONFIG:_files' \
 '--all[Configure all detected tools without prompting]' \
+'--trust-config[Explicitly trust an --config file outside the user config directory (allows it to configure \[server\], \[storage\], and \[plugins\])]' \
 '--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
@@ -95,6 +101,7 @@ project\:"Configure project-local AI tool settings in the current directory"))' 
 _arguments "${_arguments_options[@]}" : \
 '-c+[Path to the configuration file]:CONFIG:_files' \
 '--config=[Path to the configuration file]:CONFIG:_files' \
+'--trust-config[Explicitly trust an --config file outside the user config directory (allows it to configure \[server\], \[storage\], and \[plugins\])]' \
 '--trust-workspace-plugins[Explicitly trust and execute \[plugins\] from a workspace-local contextd.toml]' \
 '-h[Print help]' \
 '--help[Print help]' \

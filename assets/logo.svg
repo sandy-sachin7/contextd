@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="contextd logo">
+  <defs>
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#1E293B"/>
+    </linearGradient>
+    <linearGradient id="accent-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="50%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#A855F7"/>
+    </linearGradient>
+    <linearGradient id="ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#A855F7" stop-opacity="0.45"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded container for crisp legibility on both GitHub light & dark themes -->
+  <rect x="6" y="6" width="116" height="116" rx="28" fill="url(#bg-grad)" stroke="url(#ring-grad)" stroke-width="2.5"/>
+
+  <!-- Subtle vector lattice lines representing semantic index connections -->
+  <g stroke="#38BDF8" stroke-opacity="0.32" stroke-width="2" stroke-linecap="round">
+    <line x1="36" y1="42" x2="64" y2="64"/>
+    <line x1="36" y1="86" x2="64" y2="64"/>
+    <line x1="90" y1="38" x2="64" y2="64"/>
+    <line x1="90" y1="90" x2="64" y2="64"/>
+    <line x1="36" y1="42" x2="36" y2="86"/>
+  </g>
+
+  <!-- Open stylized 'C' arc representing Context & local loop -->
+  <path
+    d="M 86 42 A 30 30 0 1 0 86 86"
+    fill="none"
+    stroke="url(#accent-grad)"
+    stroke-width="11"
+    stroke-linecap="round"
+  />
+
+  <!-- Core semantic node + outer vector nodes -->
+  <circle cx="64" cy="64" r="10" fill="url(#accent-grad)"/>
+  <circle cx="64" cy="64" r="4.5" fill="#F8FAFC"/>
+  <circle cx="90" cy="38" r="5.5" fill="#38BDF8"/>
+  <circle cx="90" cy="90" r="5.5" fill="#A855F7"/>
+  <circle cx="36" cy="42" r="4" fill="#7DD3FC"/>
+  <circle cx="36" cy="86" r="4" fill="#C084FC"/>
+</svg>

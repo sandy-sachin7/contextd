@@ -1,110 +1,93 @@
 # Continue.dev MCP Integration for contextd
 
-This guide explains how to use **contextd** with the [Continue.dev](https://continue.dev) VSCode extension.
+This guide explains how to use **contextd** with the [Continue.dev](https://continue.dev) IDE extension.
+
+## Automatic Setup (Recommended)
+
+```bash
+contextd setup
+contextd connect --tool continue
+```
+
+`contextd connect` configures `~/.continue/config.json` (or `.continue/` with `--scope project`), creates a `.bak` backup, and launches `contextd mcp` using your user-global configuration.
 
 ## Prerequisites
 
-1. **Install Continue.dev**: Search for "Continue" in VSCode extensions
-2. **Build contextd**: `cargo build --release`
-3. **Index your codebase** first (run once as daemon):
-   ```bash
-   ./target/release/contextd --config contextd.toml
-   ```
+1. **Install Continue.dev** in VS Code or JetBrains.
+2. **Install or build contextd**: `cargo install contextd --locked` (or `cargo build --release --locked`).
+3. **Index your codebase** by running `contextd daemon` once (or keeping it running in the background).
 
-## Configuration
+## Manual Configuration
 
-### Option 1: Global Config (`~/.continue/config.yaml`)
+### Option 1: User-Global Config (Recommended)
 
-Add to your `~/.continue/config.yaml`:
+When `--config` is omitted, `contextd mcp` loads your trusted user-global config (`~/.config/contextd/contextd.toml` on Linux, `~/Library/Application Support/contextd/contextd.toml` on macOS) or platform defaults so it works regardless of the IDE's working directory.
+
+Add to `~/.continue/config.yaml`:
 
 ```yaml
 mcpServers:
   - name: contextd
     command: /absolute/path/to/contextd
     args:
-      - --mcp
-      - --config
-      - /absolute/path/to/contextd.toml
+      - mcp
 ```
 
-### Option 2: Project-Level Config
+### Option 2: Explicit Config Path
 
-Create `.continue/mcpServers/contextd.yaml` in your project root:
+If you pass an explicit `--config` located **outside** the user config directory (for example, inside a project folder), `contextd` treats it as untrusted by default and ignores its `[server]`, `[storage]`, and `[plugins]` sections. Pass `--trust-config` only if you own and trust that config file:
 
 ```yaml
+# .continue/mcpServers/contextd.yaml
 name: contextd
-command: /home/you/contextd/target/release/contextd
+command: /absolute/path/to/contextd
 args:
-  - --mcp
+  - mcp
   - --config
-  - /home/you/contextd/contextd.toml
+  - /absolute/path/to/contextd.toml
+  - --trust-config
 ```
 
 ## Available Tools
 
-Once configured, Continue.dev can use these tools:
-
 ### `search_context`
-Search for relevant code by meaning.
+Hybrid semantic (`sqlite-vec`) + keyword (`FTS5`) search over your indexed codebase.
 
 **Parameters:**
-- `query` (string): Natural language search
-- `limit` (number): Max results (default: 5)
-- `file_types` (string[]): Filter by extension
-- `min_score` (number): Minimum relevance 0.0-1.0
-
-**Example prompts:**
-- "Search contextd for functions that handle embeddings"
-- "Find code related to file watching"
-- "Search for database operations in Rust files"
+- `query` (string, required): Natural language or keyword search query
+- `limit` (integer): Max results (default: `5`, max: `100`)
+- `file_types` (string[]): Filter by extension (e.g., `["rs", "py"]`)
+- `paths` (string[]): Filter by path substrings
+- `min_score` (number): Minimum relevance score (`0.0`-`1.0`)
+- `start_time` / `end_time` (integer): UNIX timestamp bounds (seconds)
+- `context_lines` (integer): Surrounding source lines (`0`-`20`)
 
 ### `get_status`
-Get indexing statistics.
-
-**Returns:**
-- Number of indexed files
-- Total content chunks
-- Database size
+Returns indexed file count, total chunks, and database size.
 
 ## Usage in Continue
 
-1. Open VSCode with Continue extension
-2. In Continue chat, use `@Tools` to select MCP tools
-3. Or just ask naturally:
+1. Open VS Code with the Continue extension.
+2. In Continue chat, select the `contextd` MCP tools or ask naturally:
    > "Use search_context to find code about semantic search with limit 3"
 
-## Example Config File
-
-Full `contextd.toml` for Continue:
+## Example User-Global Config (`~/.config/contextd/contextd.toml`)
 
 ```toml
 [storage]
-db_path = "/home/you/.contextd/index.db"
-model_path = "/home/you/.contextd/models"
+db_path = "~/.local/share/contextd/contextd.db"
+model_path = "~/.local/share/contextd/models"
+model_type = "all-minilm-l6-v2"
 
 [watch]
-# Your project(s) to index
 paths = [
     "/home/you/your-project/src",
     "/home/you/your-project/docs"
 ]
-
-[plugins]
-# Optional: external parsers for special formats
-# pdf = ["pdftotext", "-"]
 ```
 
 ## Troubleshooting
 
-### "Tool not found"
-- Ensure contextd path is absolute
-- Verify the binary has execute permissions
-- Check Continue logs: `Cmd+Shift+P` → "Continue: View Logs"
-
-### Empty search results
-- Make sure you've run contextd in daemon mode first to build the index
-- Check that the database file exists
-
-### Connection errors
-- Verify contextd has access to the model files
-- Try running `contextd --mcp` manually to check for errors
+- **"Tool not found"**: Ensure the `contextd` path is absolute and executable, and check Continue logs (`Cmd/Ctrl+Shift+P` -> "Continue: View Logs").
+- **Empty search results**: Make sure `contextd daemon` has indexed your workspace into the same `db_path`.
+- **Connection errors**: Verify model files exist (`contextd setup`) and test manually with `contextd mcp`. Diagnostics are written exclusively to `stderr`.

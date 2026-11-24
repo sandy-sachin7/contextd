@@ -1,18 +1,14 @@
 # Hybrid Search
 
-contextd combines vector embeddings with full-text search (SQLite FTS5) for superior results:
+`contextd` combines `sqlite-vec` KNN vector similarity with full-text keyword search (`SQLite FTS5`) across CLI, HTTP API, and MCP:
 
-- **Semantic**: Understands meaning and context via ONNX embeddings
-- **Keyword**: Fast exact matches via FTS5 with porter tokenizer
-- **Weighted**: Reciprocal Rank Fusion (RRF) automatically balances both approaches
+- **Semantic (`sqlite-vec`)**: Cosine similarity via local ONNX embeddings (`WHERE embedding MATCH ?1 AND k = ?2`), with progressive `k` expansion when file, path, or time filters are active.
+- **Keyword (`FTS5`)**: Sanitized, tokenized `OR` queries using the Porter stemming tokenizer (`porter unicode61`), with SQL filters applied before `LIMIT`.
+- **Normalized Fusion**: Reciprocal Rank Fusion (`k = 60`) normalized to `[0.0, 1.0]` and blended with semantic cosine similarity.
 
-### Search Ranking
+## Search Ranking Pipeline
 
-The hybrid search uses **Reciprocal Rank Fusion (RRF)** with k=60:
-
-1. Vector search (cosine similarity) - fetches top 50
-2. FTS5 keyword search - fetches top 50
-3. RRF combines both ranks
-4. Final score = semantic score * (1 - recency_weight) + recency_boost * recency_weight + ln(1+hit_count) * frequency_weight
-
-Default weights: recency=0.1, frequency=0.1
+1. **Vector KNN** fetches top candidates (`clamp(limit * 5, 50, 200)`) via `sqlite-vec` and applies recency decay (default weight `0.1`) and logarithmic frequency boost (default weight `0.1`).
+2. **FTS5 Keyword Search** fetches top keyword matches with SQL filters applied prior to `LIMIT`.
+3. **Normalized RRF** combines both rank lists into `[0.0, 1.0]` and blends rank consensus with vector similarity.
+4. **Filtering & Truncation** applies `min_score`, sorts deterministically (mapping `NaN` to `0.0`), truncates to `limit`, and resolves optional `context_lines` only for the final results.

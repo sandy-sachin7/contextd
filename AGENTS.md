@@ -2,38 +2,44 @@
 
 ## Project Context
 
-contextd is a local-first semantic context daemon for AI agents. It watches files,
-indexes them via ONNX embeddings, and exposes search through REST API, CLI, and MCP.
+`contextd` (v4.0.0) is a local-first, privacy-preserving semantic context daemon and Rust library for AI agents. It watches local files, chunks them with Tree-sitter/Markdown/PDF/sandboxed plugins, embeds them via batched ONNX Runtime, stores them in SQLite WAL (`sqlite-vec` KNN + `FTS5`), and serves hybrid search over MCP stdio, hardened Axum HTTP, and CLI.
 
 ## Repository
 
 https://github.com/sandy-sachin7/contextd
 
-## Build & Test
+## Build & Verification
 
 ```bash
-cargo build --release
-cargo test                    # unit tests (43 + 4 + 5 + 3 = 55)
-cargo test --test load_test   # integration tests
-cargo test --test watcher_test
-cargo test --test zero_config_test  # auto-download tests
-python3 scripts/test_mcp_local.py  # MCP E2E tests
-python3 scripts/memory_stress_test.py  # memory stress test
-bash scripts/playground.sh    # one-line playground
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+cargo test --lib --bins --locked      # unit tests
+cargo test --locked                   # full suite (unit + doc + integration)
+cargo run --example embedded_search   # offline library example
+CONTEXTD_BIN=./target/debug/contextd python3 scripts/test_mcp_local.py  # 17 MCP E2E checks
+bash -n scripts/install.sh scripts/playground.sh scripts/pdftotext.sh
 ```
 
-## CI
+## Architecture & Security Invariants
 
-- `.github/workflows/ci.yml` — fmt check, build, test, clippy
-- `.github/workflows/release.yml` — cross-compile for 5 targets on tag
-- `.github/workflows/docker.yml` — Docker build + push
-- `.github/workflows/audit.yml` — daily cargo-audit
-- `.github/workflows/publish.yml` — crates.io publish
+- **MSRV**: Rust `1.91+`, edition 2021 (`rust-toolchain.toml` tracks `stable`).
+- **Storage**: Schema v2 SQLite WAL (`src/storage/db.rs`) with single writer + 8-connection read-only `r2d2` reader pool, `sqlite-vec` KNN, and Porter-stemmed `FTS5` (no in-memory LRU cache).
+- **Concurrency & Watching**: `available_parallelism().clamp(2, 8)` workers, `500ms` default debounce, `PathCoordinator` per-path coalescing, `blake3` fast-skipping.
+- **Trust Boundaries**: Workspace `./contextd.toml` (and untrusted `--config` without `--trust-config`) can only set `[watch]` and `[chunking]`; `[plugins]` requires explicit trust (`--trust-workspace-plugins`, `--trust-config`, or user-global `security.allow_workspace_plugins = true`).
+- **HTTP & MCP Hardening**: Loopback `Host` check in unauthenticated mode, mandatory Bearer auth on non-loopback binds, default `limit = 5`, 64 KiB HTTP body cap, 16 MiB MCP line cap, `O_NOFOLLOW` / reparse-point-safe file reads (`safe_read.rs`), never log source code or search results.
+
+## CI Workflows
+
+- `.github/workflows/ci.yml` — fmt, clippy, rustdoc (`-D warnings`), unit tests (`cargo test --lib --bins`), integration tests, benchmark compile, Docker build
+- `.github/workflows/audit.yml` — daily `cargo audit`
+- `.github/workflows/release.yml` — cross-compiled multi-arch release binaries + `SHA256SUMS.txt`
+- `.github/workflows/docker.yml` — GHCR image build & push
+- `.github/workflows/publish.yml` — Crates.io publish
+- `.github/workflows/docs.yml` — mdBook build & GitHub Pages deploy
 
 ## Conventions
 
-- Rust edition 2021, stable toolchain
-- Conventional commits: `feat:`, `fix:`, `docs:`, `chore:`, `style:`, `refactor:`
-- All new code needs tests
-- Document public API
-- Use anyhow for error handling
+- Conventional Commits: `feat:`, `fix:`, `perf:`, `security:`, `docs:`, `refactor:`, `test:`, `chore:`
+- Use `anyhow` for application errors; keep all new code covered by tests and zero-warning rustdoc.
+- Regenerate `completions/{contextd.bash,_contextd,contextd.fish}` via `cargo run -- completions <shell>` after any CLI change.
