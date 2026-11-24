@@ -5,6 +5,13 @@ All notable changes to `contextd` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.2] - 2026-11-25
+
+### Fixed
+- Normalize paths to the nearest existing ancestor before comparing exclusions, so fresh model and database directories are excluded correctly on macOS and Windows.
+- Normalize Windows verbatim path prefixes in `safe_read` handle checks.
+- Run the full test suite on Windows and macOS in CI; watcher tests now compare normalized path keys.
+
 ## [4.0.1] - 2026-11-25
 
 ### Security & Compatibility
