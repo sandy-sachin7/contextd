@@ -28,7 +28,7 @@ serde_json = "1.0"
 json5 = "0.4"
 axum = "0.7"
 tower = { version = "0.4", features = ["util", "limit", "timeout"] }
-tower-http = { version = "0.5", features = ["limit", "timeout"] }
+tower-http = { version = "0.6", features = ["limit", "timeout"] }
 # Pinned: ort-sys 2.0.0-rc.15 dropped x86_64-apple-darwin prebuilt ONNX Runtime
 # binaries, which breaks the Intel macOS release target. rc.10 still ships them.
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["ndarray", "download-binaries", "std", "tracing"] }
