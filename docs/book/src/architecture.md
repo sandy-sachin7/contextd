@@ -63,4 +63,4 @@ Three async interfaces:
 - **MCP Server**: Async stdio JSON-RPC 2.0 server (`2025-06-18`, 16 MiB frame cap, `notifications/cancelled`)
 - **CLI**: One-off hybrid search (`contextd query`) and AI tool auto-configuration (`contextd connect`)
 
-See [`ARCHITECTURE.md`](../../../ARCHITECTURE.md) for the full design and trust-boundary documentation.
+See [`ARCHITECTURE.md`](https://github.com/sandy-sachin7/contextd/blob/main/ARCHITECTURE.md) for the full design and trust-boundary documentation.

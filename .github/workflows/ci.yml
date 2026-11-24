@@ -41,6 +41,9 @@ jobs:
       - name: Run integration tests
         run: cargo test --tests --verbose
 
+      - name: Run doc tests
+        run: cargo test --doc --locked --verbose
+
       - name: Compile benchmarks
         run: cargo test --benches --no-run
 

@@ -49,13 +49,13 @@ contextd connect --tool claude-desktop
   "mcpServers": {
     "contextd": {
       "command": "/path/to/contextd",
-      "args": ["mcp", "--config", "/path/to/contextd.toml"]
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-> Note: `--config` is a global flag and can appear either before or after the subcommand. When omitted, `contextd mcp` resolves config, database, and model paths from platform XDG directories so it works reliably regardless of the client's working directory.
+> Note: When `--config` is omitted, `contextd mcp` resolves config, database, and model paths from platform XDG directories so it works reliably regardless of the client's working directory. `--config` is a global flag and can appear before or after `mcp`; if you pass a config path outside your user config directory and want its `[storage]`/`[server]` settings honored, also include `--trust-config` (e.g. `["mcp", "--config", "/path/to/contextd.toml", "--trust-config"]`).
 
 ## Available Tools
 

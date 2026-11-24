@@ -2,11 +2,11 @@
 
 Thank you for contributing to **contextd**! Whether you are fixing a bug, improving retrieval quality, adding language chunkers, or tightening security boundaries, this guide will get you productive quickly.
 
-Please also review our [Code of Conduct](CODE_OF_CONDUCT.md), [Architecture Guide](ARCHITECTURE.md), and [Security Policy](SECURITY.md).
+Please also review our [Code of Conduct](https://github.com/sandy-sachin7/contextd/blob/main/CODE_OF_CONDUCT.md), [Architecture Guide](https://github.com/sandy-sachin7/contextd/blob/main/ARCHITECTURE.md), and [Security Policy](https://github.com/sandy-sachin7/contextd/blob/main/SECURITY.md).
 
 ## Prerequisites
 
-- **Rust**: `1.91+` (MSRV enforced in [`Cargo.toml`](Cargo.toml); `rust-toolchain.toml` tracks `stable` with `rustfmt` and `clippy`)
+- **Rust**: `1.91+` (MSRV enforced in [`Cargo.toml`](https://github.com/sandy-sachin7/contextd/blob/main/Cargo.toml); `rust-toolchain.toml` tracks `stable` with `rustfmt` and `clippy`)
 - **Python 3** (optional, for MCP end-to-end tests in `scripts/test_mcp_local.py`)
 
 ## Getting Started
@@ -88,8 +88,8 @@ Guidelines for smooth reviews:
 
 ## Security Issues
 
-Do **not** report security vulnerabilities in public issues or PRs. Follow [`SECURITY.md`](SECURITY.md) to submit a private GitHub Security Advisory.
+Do **not** report security vulnerabilities in public issues or PRs. Follow [`SECURITY.md`](https://github.com/sandy-sachin7/contextd/blob/main/SECURITY.md) to submit a private GitHub Security Advisory.
 
 ## License
 
-By contributing to `contextd`, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing to `contextd`, you agree that your contributions will be licensed under the [MIT License](https://github.com/sandy-sachin7/contextd/blob/main/LICENSE).

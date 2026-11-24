@@ -6,13 +6,15 @@ Add contextd to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "contextd": {
-      "command": "/path/to/contextd/target/release/contextd",
-      "args": ["mcp", "--config", "/path/to/contextd.toml"],
+      "command": "/path/to/contextd",
+      "args": ["mcp"],
       "env": {}
     }
   }
 }
 ```
+
+> Or run `contextd connect --tool claude-desktop` to configure this automatically. When `--config` is omitted, `contextd mcp` loads config, database, and models from platform XDG directories (`~/.config/contextd/contextd.toml`). If you pass a custom config path outside that directory and want its `[server]`/`[storage]` settings honored, add `"--config", "/path/to/contextd.toml", "--trust-config"`.
 
 **Config locations:**
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
