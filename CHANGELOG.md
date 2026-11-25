@@ -5,6 +5,17 @@ All notable changes to `contextd` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] - 2026-11-25
+
+### Changed
+- **Method-Level Rust AST Chunking**: `chunk_rust_with_limits` now descends into large `impl` and inline `mod` blocks (`> max_chars`) so individual methods, structs, enums, traits, and consts become discrete semantic chunks with their doc comments and attributes instead of arbitrary fixed-offset slices.
+- **Contextual Chunk Embeddings & Identifier-Split FTS5**: Daemon indexing embeds chunks with relative file path and split path-word context while keeping stored `chunks.content` and byte offsets untouched. `chunks_fts` indexes tail path context plus split camelCase/snake_case sub-tokens alongside raw chunk text.
+- **BGE Query Instruction Prefix**: Added `TextEmbedder::embed_query`, applying the recommended `"Represent this sentence for searching relevant passages: "` prefix on queries for `bge-*` models while leaving MiniLM/MPNet unchanged.
+- **Stage-2 Hybrid Reranking & Per-File Diversity**: `search_chunks_hybrid` now runs vector KNN with pure cosine similarity before RRF (`k = 40`), combines normalized RRF with candidate-set IDF-weighted distinct term coverage, exact identifier and definition-site matching, path token alignment, structural source-vs-changelog/doc priors, deterministic unclamped tie-breaking, and per-file diversity dampening.
+
+### Added
+- **Multi-Repository Retrieval Evaluation Suite (72 Queries across 3 Codebases)**: Added unseen-repo benchmarks `eval/deltalens_queries.json` (18 queries) and `eval/shard_queries.json` (18 queries) alongside `eval/contextd_queries.json` (36 queries), with checked-in raw reports (`eval/results-q8.json`, `eval/results-deltalens-q8.json`, `eval/results-shard-q8.json`). Default hybrid (`all-minilm-l6-v2-q8`) outperforms `ripgrep`, FTS5-only, and vector-only across all three repos: `0.851` MRR / `0.861` nDCG@10 on `contextd` (vs `0.793` / `0.816`), `0.931` / `0.952` on `deltalens` (vs `0.698` / `0.748`), and `0.903` / `0.911` on `shard` (vs `0.715` / `0.762`).
+
 ## [4.1.0] - 2026-11-25
 
 ### Added

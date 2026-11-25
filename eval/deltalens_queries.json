@@ -1,0 +1,110 @@
+[
+  {
+    "id": "dl-sem-01",
+    "category": "semantic",
+    "query": "reject unsupported Delta Lake reader protocol versions and unknown reader features",
+    "expected_files": ["src/core/model/action.rs", "src/core/replay.rs", "src/error.rs"]
+  },
+  {
+    "id": "dl-sem-02",
+    "category": "semantic",
+    "query": "check whether widening column types between versions is breaking or safe",
+    "expected_files": ["src/core/analyzer/schema.rs"]
+  },
+  {
+    "id": "dl-sem-03",
+    "category": "semantic",
+    "query": "prevent symlink directory traversal when opening local table files",
+    "expected_files": ["src/core/storage.rs"]
+  },
+  {
+    "id": "dl-sem-04",
+    "category": "semantic",
+    "query": "parse V2 checkpoint sidecar parquet files and extract add remove actions",
+    "expected_files": ["src/core/parser/checkpoint.rs"]
+  },
+  {
+    "id": "dl-sem-05",
+    "category": "semantic",
+    "query": "measure file size imbalance and detect small files waiting for vacuum",
+    "expected_files": ["src/core/analyzer/health.rs", "src/core/model/stats.rs"]
+  },
+  {
+    "id": "dl-sem-06",
+    "category": "semantic",
+    "query": "use last checkpoint hint to avoid listing every historical cloud commit",
+    "expected_files": ["src/core/reader.rs"]
+  },
+  {
+    "id": "dl-exact-01",
+    "category": "exact",
+    "query": "validate_reader_support",
+    "expected_files": ["src/core/model/action.rs"]
+  },
+  {
+    "id": "dl-exact-02",
+    "category": "exact",
+    "query": "compute_skew_score",
+    "expected_files": ["src/core/analyzer/health.rs"]
+  },
+  {
+    "id": "dl-exact-03",
+    "category": "exact",
+    "query": "parse_delta_interval_ms",
+    "expected_files": ["src/core/model/stats.rs"]
+  },
+  {
+    "id": "dl-exact-04",
+    "category": "exact",
+    "query": "parse_parquet_checkpoint",
+    "expected_files": ["src/core/parser/checkpoint.rs"]
+  },
+  {
+    "id": "dl-exact-05",
+    "category": "exact",
+    "query": "column_mapping_id",
+    "expected_files": ["src/core/model/schema.rs"]
+  },
+  {
+    "id": "dl-exact-06",
+    "category": "exact",
+    "query": "diff_from_state",
+    "expected_files": ["src/core/analyzer/diff.rs"]
+  },
+  {
+    "id": "dl-mixed-01",
+    "category": "mixed",
+    "query": "Deletion Vector unique_id remove before add replay state machine",
+    "expected_files": ["src/core/replay.rs", "src/core/model/action.rs"]
+  },
+  {
+    "id": "dl-mixed-02",
+    "category": "mixed",
+    "query": "NDJSON commit log line parsing warnings and malformed JSON",
+    "expected_files": ["src/core/parser/commit.rs"]
+  },
+  {
+    "id": "dl-mixed-03",
+    "category": "mixed",
+    "query": "typeWidening date timestamp_ntz decimal scale precision rules",
+    "expected_files": ["src/core/analyzer/schema.rs"]
+  },
+  {
+    "id": "dl-mixed-04",
+    "category": "mixed",
+    "query": "S3 GCS Azure object_store list_with_offset cloud storage backend",
+    "expected_files": ["src/core/storage.rs"]
+  },
+  {
+    "id": "dl-mixed-05",
+    "category": "mixed",
+    "query": "trace commit history operation lineage entries filter",
+    "expected_files": ["src/core/analyzer/lineage.rs"]
+  },
+  {
+    "id": "dl-mixed-06",
+    "category": "mixed",
+    "query": "deletedFileRetentionDuration reclaimable tombstone bytes health issues",
+    "expected_files": ["src/core/model/stats.rs", "src/core/analyzer/health.rs"]
+  }
+]

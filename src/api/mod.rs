@@ -350,11 +350,11 @@ async fn handle_query(
             match mode {
                 "fts" => db.search_chunks_fts(&query_text, &options),
                 "vector" => {
-                    let embedding = embedder.embed(&query_text)?;
+                    let embedding = embedder.embed_query(&query_text)?;
                     db.search_chunks_enhanced(&embedding, &options)
                 }
                 _ => {
-                    let embedding = embedder.embed(&query_text)?;
+                    let embedding = embedder.embed_query(&query_text)?;
                     db.search_chunks_hybrid(&query_text, &embedding, &options)
                 }
             }

@@ -81,6 +81,9 @@ pub fn lookup_model_spec(model_type: &str) -> Result<ModelSpec> {
 /// deterministically without loading ONNX model weights.
 pub trait TextEmbedder: Send + Sync {
     fn embed(&self, text: &str) -> Result<Vec<f32>>;
+    fn embed_query(&self, query: &str) -> Result<Vec<f32>> {
+        self.embed(query)
+    }
     fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         texts.iter().map(|t| self.embed(t)).collect()
     }
@@ -91,6 +94,9 @@ pub trait TextEmbedder: Send + Sync {
 impl<T: TextEmbedder + ?Sized> TextEmbedder for Arc<T> {
     fn embed(&self, text: &str) -> Result<Vec<f32>> {
         (**self).embed(text)
+    }
+    fn embed_query(&self, query: &str) -> Result<Vec<f32>> {
+        (**self).embed_query(query)
     }
     fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         (**self).embed_batch(texts)
@@ -193,6 +199,19 @@ impl Embedder {
         results
             .pop()
             .ok_or_else(|| anyhow!("Empty embedding batch result"))
+    }
+
+    /// Embed a search query, applying the recommended retrieval instruction prefix for BGE models.
+    pub fn embed_query(&self, query: &str) -> Result<Vec<f32>> {
+        if self.model_type.starts_with("bge-") {
+            let prefixed = format!(
+                "Represent this sentence for searching relevant passages: {}",
+                query
+            );
+            self.embed(&prefixed)
+        } else {
+            self.embed(query)
+        }
     }
 
     pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
@@ -306,6 +325,10 @@ impl Embedder {
 impl TextEmbedder for Embedder {
     fn embed(&self, text: &str) -> Result<Vec<f32>> {
         Embedder::embed(self, text)
+    }
+
+    fn embed_query(&self, query: &str) -> Result<Vec<f32>> {
+        Embedder::embed_query(self, query)
     }
 
     fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {

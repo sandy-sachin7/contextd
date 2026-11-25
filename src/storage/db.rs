@@ -58,14 +58,143 @@ fn normalize_extension_filter(ext: &str) -> String {
 }
 
 const FTS_STOPWORDS: &[&str] = &[
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in", "into", "is",
-    "it", "of", "on", "or", "that", "the", "this", "to", "via", "what", "when", "where", "which",
-    "with",
+    "a", "an", "and", "are", "as", "at", "be", "by", "do", "does", "for", "from", "how", "in",
+    "into", "is", "it", "of", "on", "or", "that", "the", "this", "to", "via", "what", "when",
+    "where", "which", "with",
 ];
 
+/// Extract the trailing relative path context (up to 4 components) for lexical/embedding hints.
+pub fn tail_path_context(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let parts: Vec<&str> = normalized.split('/').filter(|s| !s.is_empty()).collect();
+    let keep = parts.len().min(4);
+    parts[parts.len() - keep..].join("/")
+}
+
+/// Split camelCase, PascalCase, snake_case, kebab-case, and path strings into lowercase tokens.
+pub fn split_identifier_tokens(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for raw in text.split(|c: char| !c.is_alphanumeric()) {
+        if raw.is_empty() {
+            continue;
+        }
+        let chars: Vec<char> = raw.chars().collect();
+        let mut start = 0usize;
+        for i in 1..chars.len() {
+            let prev = chars[i - 1];
+            let curr = chars[i];
+            let next_is_lower = chars.get(i + 1).is_some_and(|c| c.is_lowercase());
+            let boundary = (prev.is_lowercase() && curr.is_uppercase())
+                || (prev.is_uppercase() && curr.is_uppercase() && next_is_lower)
+                || (prev.is_alphabetic() != curr.is_alphabetic());
+            if boundary {
+                let seg: String = chars[start..i].iter().collect();
+                let lower = seg.to_ascii_lowercase();
+                if lower.len() >= 2 {
+                    out.push(lower);
+                }
+                start = i;
+            }
+        }
+        let seg: String = chars[start..].iter().collect();
+        let lower = seg.to_ascii_lowercase();
+        if lower.len() >= 2 {
+            out.push(lower);
+        }
+    }
+    out
+}
+
+/// Build the FTS5-indexed text for a chunk: original content plus tail file path and
+/// split camelCase/snake_case identifier sub-tokens so both exact symbols and natural queries hit.
+pub fn build_fts_document(file_path: &str, content: &str) -> String {
+    let tail_path = tail_path_context(file_path);
+    let mut extra_tokens: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for tok in split_identifier_tokens(&tail_path) {
+        if seen.insert(tok.clone()) {
+            extra_tokens.push(tok);
+        }
+    }
+    for word in content.split(|c: char| !c.is_alphanumeric() && c != '_') {
+        let has_internal_split = word.contains('_')
+            || word
+                .chars()
+                .zip(word.chars().skip(1))
+                .any(|(a, b)| a.is_lowercase() && b.is_uppercase());
+        if has_internal_split {
+            for sub in split_identifier_tokens(word) {
+                if seen.insert(sub.clone()) {
+                    extra_tokens.push(sub);
+                }
+            }
+        }
+    }
+
+    if extra_tokens.is_empty() {
+        format!("{}\n{}", tail_path, content)
+    } else {
+        format!("{}\n{}\n{}", tail_path, extra_tokens.join(" "), content)
+    }
+}
+
+/// Principled structural prior for mixed code+documentation repositories.
+/// Prevents changelogs, licenses, READMEs, and test fixtures from drowning out primary
+/// implementation files when the query does not explicitly ask for docs or tests.
+fn structural_file_prior(
+    tail_path_lower: &str,
+    body_lower: &str,
+    file_type: &str,
+    query_mentions_docs: bool,
+    query_mentions_tests: bool,
+) -> f32 {
+    let file_name = tail_path_lower
+        .rsplit('/')
+        .next()
+        .unwrap_or(tail_path_lower);
+
+    if !query_mentions_docs {
+        if file_name.starts_with("changelog")
+            || file_name.starts_with("license")
+            || file_name.starts_with("contributing")
+            || file_name.starts_with("code_of_conduct")
+            || file_name.starts_with("security")
+        {
+            return 0.58;
+        }
+        if matches!(file_type, "md" | "markdown" | "txt" | "rst")
+            || tail_path_lower.starts_with("docs/")
+            || tail_path_lower.contains("/docs/")
+        {
+            return 0.78;
+        }
+    }
+
+    if !query_mentions_tests {
+        let is_test_path = tail_path_lower.starts_with("tests/")
+            || tail_path_lower.contains("/tests/")
+            || tail_path_lower.starts_with("benches/")
+            || tail_path_lower.contains("/benches/")
+            || file_name.ends_with("_test.rs")
+            || file_name.ends_with("_tests.rs")
+            || file_name.starts_with("test_")
+            || file_name.contains(".test.")
+            || file_name.contains(".spec.");
+        let is_test_chunk = body_lower.contains("#[test]")
+            || body_lower.contains("#[tokio::test]")
+            || body_lower.contains("#[cfg(test)]");
+        if is_test_path || is_test_chunk {
+            return 0.84;
+        }
+    }
+
+    1.0
+}
+
 /// Tokenize a free-text query into sanitized FTS5 OR-joined quoted terms.
+/// Preserves exact identifiers while also emitting camelCase/snake_case sub-tokens.
 /// Strips common English stopwords when meaningful tokens remain.
-/// Returns `None` if no searchable tokens exist.
 pub fn build_fts5_query(query_text: &str) -> Option<String> {
     let raw_tokens: Vec<&str> = query_text
         .split(|c: char| !c.is_alphanumeric() && c != '_')
@@ -92,11 +221,30 @@ pub fn build_fts5_query(query_text: &str) -> Option<String> {
         filtered
     };
 
-    let tokens: Vec<String> = chosen
-        .into_iter()
-        .take(32)
-        .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
-        .collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut tokens: Vec<String> = Vec::new();
+    for tok in chosen {
+        let lower = tok.to_ascii_lowercase();
+        if seen.insert(lower) {
+            tokens.push(format!("\"{}\"", tok.replace('"', "\"\"")));
+        }
+        let has_split = tok.contains('_')
+            || tok
+                .chars()
+                .zip(tok.chars().skip(1))
+                .any(|(a, b)| a.is_lowercase() && b.is_uppercase());
+        if has_split {
+            for sub in split_identifier_tokens(tok) {
+                if !FTS_STOPWORDS.contains(&sub.as_str()) && seen.insert(sub.clone()) {
+                    tokens.push(format!("\"{}\"", sub.replace('"', "\"\"")));
+                }
+            }
+        }
+        if tokens.len() >= 32 {
+            break;
+        }
+    }
+    tokens.truncate(32);
 
     if tokens.is_empty() {
         None
@@ -533,7 +681,8 @@ impl Database {
                     let emb_bytes = encode_f32_le(emb);
                     insert_vec.execute(params![chunk_id, emb_bytes.as_slice()])?;
                 }
-                insert_fts.execute(params![chunk_id, chunk.content])?;
+                let fts_doc = build_fts_document(path, chunk.content);
+                insert_fts.execute(params![chunk_id, fts_doc])?;
             }
         }
 
@@ -798,9 +947,17 @@ impl Database {
             )?;
         }
 
+        let file_path: String = tx
+            .query_row(
+                "SELECT path FROM files WHERE id = ?1",
+                params![file_id],
+                |r| r.get(0),
+            )
+            .unwrap_or_default();
+        let fts_doc = build_fts_document(&file_path, content);
         tx.execute(
             "INSERT INTO chunks_fts (rowid, content) VALUES (?1, ?2)",
-            params![chunk_id, content],
+            params![chunk_id, fts_doc],
         )?;
 
         tx.commit()?;
@@ -956,7 +1113,9 @@ impl Database {
         Ok(fts_results)
     }
 
-    /// Hybrid search combining sqlite-vec KNN and tokenized FTS5 via normalized RRF.
+    /// Hybrid search combining sqlite-vec KNN and tokenized FTS5 via RRF plus
+    /// Stage-2 IDF-weighted lexical coverage, exact symbol/path matching, structural
+    /// source-vs-doc priors, and per-file diversity dampening.
     pub fn search_chunks_hybrid(
         &self,
         query_text: &str,
@@ -967,10 +1126,11 @@ impl Database {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let k = 60.0_f32;
-        let candidate_limit = (limit * 5).clamp(50, 200);
+        let k = 40.0_f32;
+        let candidate_limit = (limit * 6).clamp(80, 200);
 
-        // 1. Vector KNN Search (without context_lines yet — populate only for final top-N!)
+        // 1. Vector KNN Search using pure cosine similarity so recency/frequency
+        // never corrupt semantic ordering before rank fusion.
         let vector_options = SearchOptions {
             limit: Some(candidate_limit),
             start_time: options.start_time,
@@ -978,8 +1138,8 @@ impl Database {
             file_types: options.file_types.clone(),
             paths: options.paths.clone(),
             min_score: None,
-            recency_weight: options.recency_weight,
-            frequency_weight: options.frequency_weight,
+            recency_weight: Some(0.0),
+            frequency_weight: Some(0.0),
             context_lines: None,
         };
         let vector_results = self.search_chunks_enhanced(query_embedding, &vector_options)?;
@@ -998,10 +1158,9 @@ impl Database {
         };
         let fts_results = self.search_chunks_fts(query_text, &fts_options)?;
 
-        // 3. Normalized Reciprocal Rank Fusion (RRF) into [0.0, 1.0]
+        // 3. Reciprocal Rank Fusion (RRF) candidate union
         let mut rrf_scores: HashMap<i64, f32> = HashMap::new();
         let mut vec_similarity: HashMap<i64, f32> = HashMap::new();
-        let mut has_fts_hit: HashMap<i64, bool> = HashMap::new();
         let mut results_map: HashMap<i64, SearchResult> = HashMap::new();
 
         for (rank, res) in vector_results.iter().enumerate() {
@@ -1014,8 +1173,11 @@ impl Database {
         for (rank, res) in fts_results.iter().enumerate() {
             let rrf = 1.0 / (k + (rank as f32 + 1.0));
             *rrf_scores.entry(res.id).or_insert(0.0) += rrf;
-            has_fts_hit.insert(res.id, true);
             results_map.entry(res.id).or_insert_with(|| res.clone());
+        }
+
+        if results_map.is_empty() {
+            return Ok(Vec::new());
         }
 
         let max_possible = (if !vector_results.is_empty() {
@@ -1028,51 +1190,284 @@ impl Database {
             0.0
         });
 
-        let mut final_results: Vec<SearchResult> = results_map
-            .into_values()
-            .filter_map(|mut res| {
+        // 4. Stage-2 lexical coverage, exact symbol/path match, and structural reranking
+        let query_lower = query_text.trim().to_ascii_lowercase();
+        let raw_query_terms: Vec<String> = query_text
+            .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '/' && c != '-')
+            .map(str::trim)
+            .filter(|t| t.len() >= 2)
+            .map(|t| t.to_ascii_lowercase())
+            .filter(|t| !FTS_STOPWORDS.contains(&t.as_str()))
+            .collect();
+
+        let exact_identifiers: Vec<String> = query_text
+            .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '/' && c != '-')
+            .map(str::trim)
+            .filter(|t| {
+                t.len() >= 4
+                    && (t.contains('_')
+                        || t.contains('/')
+                        || t.contains('-')
+                        || t.chars()
+                            .zip(t.chars().skip(1))
+                            .any(|(a, b)| a.is_lowercase() && b.is_uppercase()))
+            })
+            .map(|t| t.to_ascii_lowercase())
+            .collect();
+
+        let mut query_terms: Vec<String> = Vec::new();
+        {
+            let mut seen = std::collections::HashSet::new();
+            for t in &raw_query_terms {
+                if seen.insert(t.clone()) {
+                    query_terms.push(t.clone());
+                }
+                for sub in split_identifier_tokens(t) {
+                    if !FTS_STOPWORDS.contains(&sub.as_str()) && seen.insert(sub.clone()) {
+                        query_terms.push(sub);
+                    }
+                }
+            }
+        }
+
+        let query_mentions_docs = raw_query_terms.iter().any(|t| {
+            matches!(
+                t.as_str(),
+                "readme"
+                    | "changelog"
+                    | "license"
+                    | "documentation"
+                    | "docs"
+                    | "guide"
+                    | "markdown"
+                    | "release"
+                    | "contributing"
+            )
+        });
+        let query_mentions_tests = raw_query_terms.iter().any(|t| {
+            matches!(
+                t.as_str(),
+                "test" | "tests" | "testing" | "bench" | "benchmark" | "benchmarks" | "eval"
+            )
+        });
+
+        let candidates: Vec<SearchResult> = results_map.into_values().collect();
+        let cand_texts: Vec<(String, String, std::collections::HashSet<String>)> = candidates
+            .iter()
+            .map(|res| {
+                let tail = tail_path_context(&res.file_path).to_ascii_lowercase();
+                let body = res.content.to_ascii_lowercase();
+                let mut toks: std::collections::HashSet<String> =
+                    split_identifier_tokens(&tail).into_iter().collect();
+                for sub in split_identifier_tokens(&body) {
+                    toks.insert(sub);
+                }
+                for raw in body.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '/') {
+                    if raw.len() >= 2 {
+                        toks.insert(raw.to_string());
+                    }
+                }
+                (tail, body, toks)
+            })
+            .collect();
+
+        // Candidate-set IDF weights so rare domain terms outweigh common boilerplate words.
+        let n_docs = candidates.len() as f32;
+        let term_idfs: Vec<f32> = query_terms
+            .iter()
+            .map(|qt| {
+                let df = cand_texts
+                    .iter()
+                    .filter(|(tail, body, toks)| {
+                        toks.contains(qt)
+                            || body.contains(qt.as_str())
+                            || tail.contains(qt.as_str())
+                    })
+                    .count() as f32;
+                ((n_docs + 1.0) / (df + 1.0)).ln() + 1.0
+            })
+            .collect();
+        let total_idf: f32 = term_idfs.iter().sum::<f32>().max(1e-6);
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let recency_weight = options.recency_weight.unwrap_or(0.0);
+        let frequency_weight = options.frequency_weight.unwrap_or(0.0);
+
+        let hit_counts: HashMap<i64, i64> = if frequency_weight > 0.0 {
+            if let Ok(conn) = self.read_conn() {
+                let mut map = HashMap::new();
+                if let Ok(mut stmt) = conn.prepare("SELECT file_id, hit_count FROM query_hits") {
+                    if let Ok(rows) =
+                        stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+                    {
+                        for row in rows.flatten() {
+                            map.insert(row.0, row.1);
+                        }
+                    }
+                }
+                map
+            } else {
+                HashMap::new()
+            }
+        } else {
+            HashMap::new()
+        };
+
+        // Keep unclamped raw score for sorting so strong exact/definition hits never tie at 1.0
+        // and fall back to randomized HashMap iteration order.
+        let mut scored: Vec<(f32, SearchResult)> = candidates
+            .into_iter()
+            .zip(cand_texts.iter())
+            .filter_map(|(res, (tail, body, toks))| {
                 let raw_rrf = rrf_scores.get(&res.id).copied().unwrap_or(0.0);
                 let norm_rrf = if max_possible > 0.0 {
                     (raw_rrf / max_possible).clamp(0.0, 1.0)
                 } else {
                     0.0
                 };
-                // Favor normalized RRF consensus while keeping a light vector similarity tie-breaker
-                // so prose cosine inflation does not override strong hybrid rank agreement.
-                let score = match (
-                    vec_similarity.get(&res.id),
-                    has_fts_hit.contains_key(&res.id),
-                ) {
-                    (Some(&vsim), true) => {
-                        (norm_rrf * 0.85 + vsim.clamp(0.0, 1.0) * 0.15).clamp(0.0, 1.0)
+                let vsim = vec_similarity
+                    .get(&res.id)
+                    .copied()
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 1.0);
+
+                // IDF-weighted distinct query-term coverage across chunk + path
+                let mut matched_idf = 0.0_f32;
+                let mut path_hits = 0usize;
+                let path_toks: std::collections::HashSet<String> =
+                    split_identifier_tokens(tail).into_iter().collect();
+
+                for (qt, &idf) in query_terms.iter().zip(term_idfs.iter()) {
+                    let in_path = path_toks.contains(qt) || tail.contains(qt.as_str());
+                    if in_path {
+                        path_hits += 1;
                     }
-                    (Some(&vsim), false) => {
-                        if !fts_results.is_empty() {
-                            (norm_rrf * 0.85 + vsim.clamp(0.0, 1.0) * 0.15).clamp(0.0, 1.0)
-                        } else {
-                            vsim.clamp(0.0, 1.0)
-                        }
+                    if in_path || toks.contains(qt) || body.contains(qt.as_str()) {
+                        matched_idf += idf;
                     }
-                    (None, true) => norm_rrf,
-                    (None, false) => 0.0,
+                }
+                let lex_cov = if query_terms.is_empty() {
+                    0.0
+                } else {
+                    (matched_idf / total_idf).clamp(0.0, 1.0)
+                };
+                let path_cov = if query_terms.is_empty() {
+                    0.0
+                } else {
+                    (path_hits as f32 / (query_terms.len().min(6) as f32)).clamp(0.0, 1.0)
                 };
 
+                // Exact identifier, definition-site, or full-phrase match bonus
+                let exact_id_hit = !exact_identifiers.is_empty()
+                    && exact_identifiers
+                        .iter()
+                        .any(|id| body.contains(id.as_str()) || tail.contains(id.as_str()));
+                let exact_def_hit = exact_id_hit
+                    && exact_identifiers.iter().any(|id| {
+                        [
+                            "fn ",
+                            "struct ",
+                            "enum ",
+                            "trait ",
+                            "type ",
+                            "const ",
+                            "static ",
+                            "mod ",
+                            "class ",
+                            "def ",
+                            "func ",
+                            "interface ",
+                        ]
+                        .iter()
+                        .any(|kw| body.contains(&format!("{kw}{id}")))
+                    });
+                let exact_phrase_hit =
+                    query_lower.len() >= 6 && body.contains(query_lower.as_str());
+                let exact_bonus = if exact_def_hit {
+                    0.42
+                } else if exact_id_hit {
+                    0.28
+                } else if exact_phrase_hit {
+                    0.20
+                } else {
+                    0.0
+                };
+
+                // Blend RRF consensus, dense similarity, IDF lexical coverage, and path alignment
+                let mut score =
+                    norm_rrf * 0.42 + vsim * 0.18 + lex_cov * 0.30 + path_cov * 0.10 + exact_bonus;
+
+                // Structural prior: prevent changelogs/READMEs/test suites from drowning out
+                // primary implementation code unless the user is asking about docs or tests.
+                let prior = structural_file_prior(
+                    tail,
+                    body,
+                    &res.file_type,
+                    query_mentions_docs,
+                    query_mentions_tests,
+                );
+                score *= prior;
+
+                if recency_weight > 0.0 {
+                    let age_hours = now.saturating_sub(res.last_modified) / 3600;
+                    let recency_boost = 1.0 / (1.0 + (age_hours as f32 / 24.0));
+                    score = score * (1.0 - recency_weight) + recency_boost * recency_weight;
+                }
+                if frequency_weight > 0.0 {
+                    let hc = hit_counts.get(&res.file_id).copied().unwrap_or(0);
+                    if hc > 0 {
+                        score += (hc as f32).ln_1p() * frequency_weight * 0.25;
+                    }
+                }
+
+                let clamped = score.clamp(0.0, 1.0);
                 if let Some(min) = options.min_score {
-                    if score < min {
+                    if clamped < min {
                         return None;
                     }
                 }
-                res.score = score;
-                Some(res)
+                Some((score, res))
             })
             .collect();
 
-        final_results.sort_by(|a, b| {
-            let sa = if a.score.is_nan() { 0.0 } else { a.score };
-            let sb = if b.score.is_nan() { 0.0 } else { b.score };
-            sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+        // Sort deterministically by unclamped score (tie-breaking on chunk id) before applying
+        // soft per-file diversity dampening.
+        scored.sort_by(|(sa, a), (sb, b)| {
+            let sa = if sa.is_nan() { 0.0 } else { *sa };
+            let sb = if sb.is_nan() { 0.0 } else { *sb };
+            sb.partial_cmp(&sa)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.id.cmp(&b.id))
         });
-        final_results.truncate(limit);
+
+        let mut per_file_seen: HashMap<i64, i32> = HashMap::new();
+        for (raw_score, res) in &mut scored {
+            let count = per_file_seen.entry(res.file_id).or_insert(0);
+            if *count > 0 {
+                *raw_score *= 0.80_f32.powi(*count);
+            }
+            *count += 1;
+        }
+
+        scored.sort_by(|(sa, a), (sb, b)| {
+            let sa = if sa.is_nan() { 0.0 } else { *sa };
+            let sb = if sb.is_nan() { 0.0 } else { *sb };
+            sb.partial_cmp(&sa)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        scored.truncate(limit);
+
+        let mut final_results: Vec<SearchResult> = scored
+            .into_iter()
+            .map(|(raw_score, mut res)| {
+                res.score = raw_score.clamp(0.0, 1.0);
+                res
+            })
+            .collect();
 
         if let Some(ctx_lines) = options.context_lines.filter(|&n| n > 0) {
             for res in &mut final_results {
@@ -1872,5 +2267,73 @@ mod tests {
         let results = db.search_chunks_enhanced(&query_emb, &options).unwrap();
         assert_eq!(results.len(), 3);
         assert!(results.iter().all(|r| r.file_type == "rs"));
+    }
+
+    #[test]
+    fn test_identifier_splitting_and_definition_beats_caller_and_changelog() {
+        assert_eq!(
+            split_identifier_tokens("PathCoordinator"),
+            vec!["path", "coordinator"]
+        );
+        assert_eq!(
+            split_identifier_tokens("src/indexer/safe_read.rs"),
+            vec!["src", "indexer", "safe", "read", "rs"]
+        );
+
+        let db = Database::new(":memory:").unwrap();
+        let emb = unit_vec(384, 0);
+
+        db.index_file_chunks(
+            "/repo/CHANGELOG.md",
+            100,
+            100,
+            60,
+            "h_cl",
+            &[ChunkInput {
+                start: 0,
+                end: 60,
+                content: "Added validate_reader_support protocol check.",
+                embedding: Some(&emb),
+                metadata: None,
+            }],
+        )
+        .unwrap();
+        db.index_file_chunks(
+            "/repo/src/caller.rs",
+            100,
+            100,
+            60,
+            "h_call",
+            &[ChunkInput {
+                start: 0,
+                end: 60,
+                content: "fn run() { proto.validate_reader_support().unwrap(); }",
+                embedding: Some(&emb),
+                metadata: None,
+            }],
+        )
+        .unwrap();
+        db.index_file_chunks(
+            "/repo/src/action.rs",
+            100,
+            100,
+            80,
+            "h_def",
+            &[ChunkInput {
+                start: 0,
+                end: 80,
+                content: "pub fn validate_reader_support(&self) -> Result<()> { Ok(()) }",
+                embedding: Some(&emb),
+                metadata: None,
+            }],
+        )
+        .unwrap();
+
+        let res = db
+            .search_chunks_hybrid("validate_reader_support", &emb, &SearchOptions::default())
+            .unwrap();
+        assert_eq!(res[0].file_path, "/repo/src/action.rs");
+        assert_eq!(res[1].file_path, "/repo/src/caller.rs");
+        assert_eq!(res[2].file_path, "/repo/CHANGELOG.md");
     }
 }

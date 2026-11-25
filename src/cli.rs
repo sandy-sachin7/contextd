@@ -202,7 +202,7 @@ pub async fn handle_query(config: &Config, query: &str, cli_opts: QueryCliOption
             embedder.embedding_dim(),
             embedder.model_type(),
         )?;
-        let embedding = embedder.embed(&query_owned)?;
+        let embedding = embedder.embed_query(&query_owned)?;
 
         if mode == "vector" {
             db.search_chunks_enhanced(&embedding, &options)

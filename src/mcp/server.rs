@@ -567,7 +567,7 @@ impl ContextdServer {
         let embedder = self.embedder.clone();
 
         let search_res = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            let embedding = embedder.embed(&query_owned)?;
+            let embedding = embedder.embed_query(&query_owned)?;
             db.search_chunks_hybrid(&query_owned, &embedding, &options)
         })
         .await;

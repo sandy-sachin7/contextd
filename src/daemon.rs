@@ -711,12 +711,25 @@ pub async fn index_file(
 struct PreparedFile {
     path: PathBuf,
     path_str: String,
+    display_rel_path: String,
     modified_secs: u64,
     modified_ns: i64,
     file_size: u64,
     content_hash: String,
     file_metadata: serde_json::Value,
     chunks: Vec<chunker::Chunk>,
+}
+
+fn compute_display_rel_path(path: &Path, watch_roots: &[PathBuf]) -> String {
+    for root in watch_roots {
+        if let Ok(rel) = path.strip_prefix(root) {
+            let s = rel.to_string_lossy().replace('\\', "/");
+            if !s.is_empty() {
+                return s;
+            }
+        }
+    }
+    crate::storage::db::tail_path_context(&path.to_string_lossy())
 }
 
 async fn index_file_with_roots(
@@ -747,6 +760,8 @@ async fn prepare_file_for_indexing(
         .unwrap_or("")
         .to_lowercase();
     let path_str = path.to_string_lossy().to_string();
+
+    let display_rel_path = compute_display_rel_path(&path, &watch_roots);
 
     // Open once beneath a configured root. Metadata and content use this handle.
     let open_path = path.clone();
@@ -961,6 +976,7 @@ async fn prepare_file_for_indexing(
     Some(PreparedFile {
         path,
         path_str,
+        display_rel_path,
         modified_secs,
         modified_ns,
         file_size,
@@ -981,12 +997,18 @@ async fn commit_prepared_batch(
 
     let res = tokio::task::spawn_blocking(move || -> Result<()> {
         let total_chunks: usize = batch.iter().map(|f| f.chunks.len()).sum();
-        let mut texts: Vec<&str> = Vec::with_capacity(total_chunks);
+        let mut owned_texts: Vec<String> = Vec::with_capacity(total_chunks);
         for file in &batch {
+            let path_words =
+                crate::storage::db::split_identifier_tokens(&file.display_rel_path).join(" ");
             for chunk in &file.chunks {
-                texts.push(chunk.content.as_str());
+                owned_texts.push(format!(
+                    "file: {} ({})\n{}",
+                    file.display_rel_path, path_words, chunk.content
+                ));
             }
         }
+        let texts: Vec<&str> = owned_texts.iter().map(String::as_str).collect();
 
         let embeddings = if texts.is_empty() {
             Vec::new()

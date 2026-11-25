@@ -104,25 +104,16 @@ pub fn chunk_rust(content: &str) -> Result<Vec<Chunk>> {
     chunk_rust_with_limits(content, DEFAULT_MAX_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP)
 }
 
-pub fn chunk_rust_with_limits(
+fn collect_rust_items(
+    node: tree_sitter::Node<'_>,
     content: &str,
     max_chars: usize,
-    overlap: usize,
-) -> Result<Vec<Chunk>> {
-    let mut parser = Parser::new();
-    let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
-    parser.set_language(&language)?;
-
-    let tree = parser
-        .parse(content, None)
-        .ok_or_else(|| anyhow!("Failed to parse Rust code"))?;
-    let root_node = tree.root_node();
-    let mut chunks = Vec::new();
-    let mut cursor = root_node.walk();
-
+    chunks: &mut Vec<Chunk>,
+) {
+    let mut cursor = node.walk();
     let mut pending_prefix_start: Option<usize> = None;
 
-    for child in root_node.children(&mut cursor) {
+    for child in node.children(&mut cursor) {
         let kind = child.kind();
 
         if matches!(kind, "line_comment" | "block_comment" | "attribute_item") {
@@ -149,6 +140,20 @@ pub fn chunk_rust_with_limits(
             let chunk_end = child.end_byte();
             let chunk_content = &content[chunk_start..chunk_end];
 
+            // For large `impl` or inline `mod` blocks, descend into the body so each method/item
+            // becomes its own semantic chunk instead of being sliced blindly at arbitrary offsets.
+            if matches!(kind, "impl_item" | "mod_item") && chunk_content.chars().count() > max_chars
+            {
+                if let Some(body) = child.child_by_field_name("body") {
+                    let before_len = chunks.len();
+                    collect_rust_items(body, content, max_chars, chunks);
+                    if chunks.len() > before_len {
+                        pending_prefix_start = None;
+                        continue;
+                    }
+                }
+            }
+
             chunks.push(Chunk {
                 start: chunk_start as u64,
                 end: chunk_end as u64,
@@ -161,6 +166,23 @@ pub fn chunk_rust_with_limits(
             pending_prefix_start = None;
         }
     }
+}
+
+pub fn chunk_rust_with_limits(
+    content: &str,
+    max_chars: usize,
+    overlap: usize,
+) -> Result<Vec<Chunk>> {
+    let mut parser = Parser::new();
+    let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+    parser.set_language(&language)?;
+
+    let tree = parser
+        .parse(content, None)
+        .ok_or_else(|| anyhow!("Failed to parse Rust code"))?;
+    let root_node = tree.root_node();
+    let mut chunks = Vec::new();
+    collect_rust_items(root_node, content, max_chars, &mut chunks);
 
     if chunks.is_empty() && !content.trim().is_empty() {
         return chunk_text_with_limits(content, max_chars, overlap);

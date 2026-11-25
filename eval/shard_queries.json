@@ -1,0 +1,110 @@
+[
+  {
+    "id": "sh-sem-01",
+    "category": "semantic",
+    "query": "recover interrupted multi-file checkout by rolling back backups or finishing HEAD",
+    "expected_files": ["core/src/repo.rs"]
+  },
+  {
+    "id": "sh-sem-02",
+    "category": "semantic",
+    "query": "block path traversal and symlink escapes outside the repository root",
+    "expected_files": ["core/src/fs_util.rs"]
+  },
+  {
+    "id": "sh-sem-03",
+    "category": "semantic",
+    "query": "encrypt and compress binary chunks into authenticated envelopes bound to chunk hash",
+    "expected_files": ["core/src/chunk_codec.rs", "core/src/encryption.rs"]
+  },
+  {
+    "id": "sh-sem-04",
+    "category": "semantic",
+    "query": "split large files on content-defined rolling hash boundaries",
+    "expected_files": ["core/src/chunker.rs"]
+  },
+  {
+    "id": "sh-sem-05",
+    "category": "semantic",
+    "query": "replay CRC32 checksummed write-ahead log and ignore truncated trailing crash lines",
+    "expected_files": ["core/src/wal.rs"]
+  },
+  {
+    "id": "sh-sem-06",
+    "category": "semantic",
+    "query": "prevent private secret keys from leaking during HuggingFace dataset uploads",
+    "expected_files": ["core/src/hf.rs"]
+  },
+  {
+    "id": "sh-exact-01",
+    "category": "exact",
+    "query": "recover_checkout_journal",
+    "expected_files": ["core/src/repo.rs"]
+  },
+  {
+    "id": "sh-exact-02",
+    "category": "exact",
+    "query": "safe_repo_join",
+    "expected_files": ["core/src/fs_util.rs"]
+  },
+  {
+    "id": "sh-exact-03",
+    "category": "exact",
+    "query": "encode_chunk",
+    "expected_files": ["core/src/chunk_codec.rs"]
+  },
+  {
+    "id": "sh-exact-04",
+    "category": "exact",
+    "query": "FastCdcChunker",
+    "expected_files": ["core/src/chunker.rs"]
+  },
+  {
+    "id": "sh-exact-05",
+    "category": "exact",
+    "query": "add_authorized_key",
+    "expected_files": ["core/src/auth.rs"]
+  },
+  {
+    "id": "sh-exact-06",
+    "category": "exact",
+    "query": "checkpoint_for_snapshot",
+    "expected_files": ["core/src/store/sqlite.rs", "core/src/store/mod.rs", "storage/src/lib.rs"]
+  },
+  {
+    "id": "sh-mixed-01",
+    "category": "mixed",
+    "query": "AES-256-GCM SHRD envelope AAD cross-chunk swap authentication",
+    "expected_files": ["core/src/chunk_codec.rs", "core/src/encryption.rs"]
+  },
+  {
+    "id": "sh-mixed-02",
+    "category": "mixed",
+    "query": "Ed25519 challenge response P2P peer authentication nonce",
+    "expected_files": ["core/src/p2p_sync.rs", "core/src/auth.rs"]
+  },
+  {
+    "id": "sh-mixed-03",
+    "category": "mixed",
+    "query": "tar archive backup restore confinement reject symlinks",
+    "expected_files": ["core/src/backup.rs"]
+  },
+  {
+    "id": "sh-mixed-04",
+    "category": "mixed",
+    "query": "garbage collect prune unreachable chunks preserving branches and staged objects",
+    "expected_files": ["core/src/gc.rs"]
+  },
+  {
+    "id": "sh-mixed-05",
+    "category": "mixed",
+    "query": "Axum HTTP server constant-time bearer token auth CORS router",
+    "expected_files": ["core/src/api.rs"]
+  },
+  {
+    "id": "sh-mixed-06",
+    "category": "mixed",
+    "query": "atomic_write fsync_dir temp file rename durability",
+    "expected_files": ["core/src/fs_util.rs"]
+  }
+]

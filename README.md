@@ -204,19 +204,26 @@ Measured on Linux x86_64 (AMD Ryzen 5 5600H, 12 logical CPUs) indexing the `cont
 | **SQLite Index Size (incl. WAL)** | 9.8 MB | — | **6.5 MB** |
 | **Daemon Peak RSS during initial index** | — | — | **988.7 MB** |
 
-### Retrieval Quality Evaluation (36 Queries, Uncontaminated)
+### Retrieval Quality Evaluation (72 Queries Across 3 Repositories, Uncontaminated)
 
-Evaluated on the `contextd` repository (`eval/` excluded from the staged copy and `query_hits` reset between modes) across 12 conceptual semantic queries, 12 exact symbol queries, and 12 mixed queries ([`eval/contextd_queries.json`](eval/contextd_queries.json), raw outputs in [`eval/results-fp32.json`](eval/results-fp32.json) and [`eval/results-q8.json`](eval/results-q8.json)):
+Evaluated with `all-minilm-l6-v2-q8` (`eval/` excluded from staged copies and `query_hits` reset between modes) across `contextd` (36 queries) plus two unseen Rust repositories, `deltalens` (18 queries) and `shard` (18 queries), covering conceptual semantic, exact symbol, and mixed queries ([`eval/contextd_queries.json`](eval/contextd_queries.json), [`eval/deltalens_queries.json`](eval/deltalens_queries.json), [`eval/shard_queries.json`](eval/shard_queries.json); raw outputs in [`eval/results-q8.json`](eval/results-q8.json), [`eval/results-deltalens-q8.json`](eval/results-deltalens-q8.json), [`eval/results-shard-q8.json`](eval/results-shard-q8.json)):
 
-| Method (`all-minilm-l6-v2-q8`) | Recall@1 | Recall@5 | Recall@10 | MRR | nDCG@10 | Semantic MRR | Exact MRR | Mixed MRR |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| `ripgrep` (`rg`, token-ranked) | **0.722** | **0.889** | 0.917 | **0.793** | **0.817** | **0.506** | 0.958 | **0.917** |
-| `contextd` FTS5 only | 0.556 | 0.861 | 0.972 | 0.685 | 0.752 | 0.341 | **1.000** | 0.715 |
-| `contextd` Vector KNN only | 0.389 | 0.833 | 0.889 | 0.571 | 0.629 | 0.378 | 0.779 | 0.556 |
-| `contextd` Hybrid RRF (`recency=0, freq=0`) | 0.472 | 0.861 | **1.000** | 0.649 | 0.719 | 0.433 | 0.958 | 0.555 |
-| `contextd` Hybrid Default | 0.556 | 0.806 | 0.972 | 0.676 | 0.736 | 0.379 | **1.000** | 0.647 |
+| Repository (Queries) | Method (`all-minilm-l6-v2-q8`) | Recall@1 | Recall@5 | Recall@10 | MRR | nDCG@10 | Semantic MRR | Exact MRR | Mixed MRR |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`contextd` (36)** | `ripgrep` (`rg`, token-ranked) | 0.722 | 0.861 | 0.917 | 0.793 | 0.816 | 0.503 | 0.958 | **0.917** |
+| **`contextd` (36)** | `contextd` FTS5 only | 0.611 | 0.889 | **1.000** | 0.736 | 0.798 | 0.438 | **1.000** | 0.771 |
+| **`contextd` (36)** | `contextd` Vector KNN only | 0.583 | 0.917 | 0.944 | 0.728 | 0.762 | 0.528 | 0.850 | 0.806 |
+| **`contextd` (36)** | **`contextd` Hybrid Default** | **0.778** | **0.972** | 0.972 | **0.851** | **0.861** | **0.676** | **1.000** | 0.875 |
+| **`deltalens` (18, unseen)** | `ripgrep` (`rg`, token-ranked) | 0.556 | 0.833 | 1.000 | 0.698 | 0.748 | 0.552 | 0.681 | 0.861 |
+| **`deltalens` (18, unseen)** | `contextd` FTS5 only | 0.611 | 1.000 | 1.000 | 0.764 | 0.812 | 0.889 | 0.792 | 0.611 |
+| **`deltalens` (18, unseen)** | `contextd` Vector KNN only | 0.778 | 1.000 | 1.000 | 0.889 | 0.901 | 0.833 | 0.917 | **0.917** |
+| **`deltalens` (18, unseen)** | **`contextd` Hybrid Default** | **0.889** | **1.000** | **1.000** | **0.931** | **0.952** | **1.000** | **1.000** | 0.792 |
+| **`shard` (18, unseen)** | `ripgrep` (`rg`, token-ranked) | 0.556 | 1.000 | 1.000 | 0.715 | 0.762 | 0.681 | **1.000** | 0.464 |
+| **`shard` (18, unseen)** | `contextd` FTS5 only | 0.556 | 0.944 | 1.000 | 0.739 | 0.789 | 0.806 | 0.833 | 0.579 |
+| **`shard` (18, unseen)** | `contextd` Vector KNN only | 0.722 | 1.000 | 1.000 | 0.831 | 0.859 | 0.875 | 0.750 | 0.867 |
+| **`shard` (18, unseen)** | **`contextd` Hybrid Default** | **0.833** | **1.000** | **1.000** | **0.903** | **0.911** | **1.000** | 0.833 | **0.875** |
 
-**Honest takeaway:** Hybrid RRF beats both `ripgrep` and vector-only search on `Recall@10` (**0.972–1.000** vs 0.917) and ties FTS5 at **1.000 Exact MRR**, while `all-minilm-l6-v2-q8` matches FP32 within 0.005 MRR (`0.676` vs `0.681`) at nearly half the indexing wall time. `ripgrep` still leads on `Recall@1` and `MRR` when `README.md`, `CHANGELOG.md`, and `docs/` are indexed alongside `src/` because general-text MiniLM scores prose documentation higher than Rust source chunks. Pass `--paths src/` or `--file-types rs` when querying code-only contexts.
+**Takeaway:** In v4.2.0, method-level Rust AST chunking, path-contextualized embeddings, identifier-split FTS5 indexing, and Stage-2 lexical/path/structural reranking with per-file diversity push `contextd` default hybrid search ahead of `ripgrep`, FTS5-only, and vector-only on MRR and nDCG@10 across all three repositories (weighted 72-query MRR **0.884** vs `0.750` for `ripgrep`, Semantic MRR **0.838** vs `0.560`), while cutting `contextd` initial repo indexing time further to **25.66 s** (`38.7 chunks/s`).
 
 Reproduce both benchmarks and retrieval evaluations on any repository (requires `contextd setup` once for the selected ONNX model):
 
