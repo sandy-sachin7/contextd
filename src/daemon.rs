@@ -1145,12 +1145,13 @@ mod tests {
     #[tokio::test]
     async fn test_index_file_preserves_last_known_good_index_on_embed_failure() {
         let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("auth.rs");
+        let watch_dir = fs::canonicalize(dir.path()).unwrap();
+        let file_path = watch_dir.join("auth.rs");
         fs::write(&file_path, "pub fn verify_token() -> bool { true }\n").unwrap();
 
         let mut cfg = Config::default();
-        cfg.watch.paths = vec![dir.path().to_path_buf()];
-        let db = Database::open(dir.path().join("test.db"), 4, "test-model").unwrap();
+        cfg.watch.paths = vec![watch_dir.clone()];
+        let db = Database::open(watch_dir.join("test.db"), 4, "test-model").unwrap();
         let embedder = Arc::new(ToggleEmbedder {
             fail: AtomicBool::new(false),
         });
@@ -1188,16 +1189,17 @@ mod tests {
     #[tokio::test]
     async fn test_index_file_preserves_last_known_good_index_on_plugin_failure() {
         let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("notes.custom");
+        let watch_dir = fs::canonicalize(dir.path()).unwrap();
+        let file_path = watch_dir.join("notes.custom");
         fs::write(&file_path, "initial document text").unwrap();
 
         let mut cfg = Config::default();
-        cfg.watch.paths = vec![dir.path().to_path_buf()];
+        cfg.watch.paths = vec![watch_dir.clone()];
         cfg.security.allow_workspace_plugins = true;
         cfg.plugins
             .insert("custom".to_string(), vec!["cat".to_string()]);
 
-        let db = Database::open(dir.path().join("test.db"), 4, "test-model").unwrap();
+        let db = Database::open(watch_dir.join("test.db"), 4, "test-model").unwrap();
         let embedder = Arc::new(ToggleEmbedder {
             fail: AtomicBool::new(false),
         });
