@@ -185,14 +185,29 @@ Each model is cached in its own subdirectory under `storage.model_path` and veri
 
 For supported versions, threat boundaries, and private vulnerability reporting, see [`SECURITY.md`](SECURITY.md).
 
-## Benchmarks & Footprint
+## Benchmarks & Footprint (Measured)
 
-`contextd` ships reproducible Criterion micro-benchmarks covering AST/text chunking and SQLite WAL (`sqlite-vec` + FTS5) indexing and hybrid retrieval:
+End-to-end codebase benchmark measured on Linux x86_64 (AMD Ryzen 5 5600H, 12 logical CPUs) indexing the `contextd` repository itself (`79` files, `1,262` chunks) with `all-minilm-l6-v2` (384-dim local CPU ONNX, `MAX_EMBED_BATCH_SIZE = 16`):
+
+| Metric | Measured Result |
+| :--- | :---: |
+| **Warm HTTP Hybrid Query (`POST /query`, ONNX embed + `sqlite-vec` KNN + FTS5 RRF)** | **6.44 ms** p50 · **7.74 ms** p95 (min 5.64 ms) |
+| **Cold CLI Query (`contextd query`, loads ONNX model + queries SQLite)** | **190.8 ms** median |
+| **Initial Full-Repo Indexing (79 files / 1,262 chunks, CPU ONNX)** | **65.14 s** (~19.4 chunks/s) |
+| **SQLite Index Size (`contextd.db`)** | **5.0 MB** (9.8 MB incl. active WAL) |
+| **Standalone Binary Size** | **50.8 MB** |
+
+Reproduce on any repository (requires `contextd setup` once for the local ONNX model):
 
 ```bash
-# Run all Criterion benchmarks via cargo
-cargo bench --locked
+cargo build --release --locked
+python3 scripts/bench_repo.py --target .
+```
 
+For Criterion micro-benchmarks covering AST/text chunking and SQLite WAL (`sqlite-vec` + FTS5) indexing and retrieval:
+
+```bash
+cargo bench --locked
 # Or generate HTML reports in target/criterion/ via cargo-criterion
 bash scripts/bench.sh
 ```

@@ -107,6 +107,10 @@ pub struct Embedder {
     model_type: String,
 }
 
+/// Maximum chunks encoded per ONNX `session.run()` call.
+/// Bounds ONNX Runtime arena memory and prevents large files from starving concurrent queries.
+const MAX_EMBED_BATCH_SIZE: usize = 16;
+
 impl Embedder {
     pub fn new(config: &StorageConfig) -> Result<Self> {
         let spec = lookup_model_spec(&config.model_type)?;
@@ -190,6 +194,18 @@ impl Embedder {
             return Ok(Vec::new());
         }
 
+        if texts.len() <= MAX_EMBED_BATCH_SIZE {
+            return self.embed_micro_batch(texts);
+        }
+
+        let mut all_embeddings = Vec::with_capacity(texts.len());
+        for chunk in texts.chunks(MAX_EMBED_BATCH_SIZE) {
+            all_embeddings.extend(self.embed_micro_batch(chunk)?);
+        }
+        Ok(all_embeddings)
+    }
+
+    fn embed_micro_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         let encodings = self
             .tokenizer
             .encode_batch(texts.to_vec(), true)
