@@ -44,6 +44,11 @@ pub struct QueryRequest {
     pub paths: Option<Vec<String>>,
     pub min_score: Option<f32>,
     pub context_lines: Option<usize>,
+    /// Optional search mode: "hybrid" (default), "vector", or "fts".
+    #[serde(default)]
+    pub mode: Option<String>,
+    pub recency_weight: Option<f32>,
+    pub frequency_weight: Option<f32>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -288,6 +293,38 @@ async fn handle_query(
         }
     }
 
+    if let Some(w) = payload.recency_weight {
+        if !w.is_finite() || !(0.0..=1.0).contains(&w) {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "recency_weight must be a finite number between 0.0 and 1.0",
+            );
+        }
+    }
+    if let Some(w) = payload.frequency_weight {
+        if !w.is_finite() || !(0.0..=1.0).contains(&w) {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "frequency_weight must be a finite number between 0.0 and 1.0",
+            );
+        }
+    }
+
+    let mode = match payload.mode.as_deref().map(str::trim) {
+        None | Some("") | Some("hybrid") => "hybrid",
+        Some("vector") => "vector",
+        Some("fts") => "fts",
+        Some(other) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Unsupported mode '{}': expected 'hybrid', 'vector', or 'fts'",
+                    other
+                ),
+            );
+        }
+    };
+
     let limit = payload.limit.unwrap_or(5).min(MAX_QUERY_LIMIT);
     let max_results = payload.max_results.unwrap_or(limit).min(MAX_QUERY_LIMIT);
     let effective_limit = limit.min(max_results);
@@ -299,8 +336,8 @@ async fn handle_query(
         file_types: payload.file_types,
         paths: payload.paths,
         min_score: payload.min_score,
-        recency_weight: None,
-        frequency_weight: None,
+        recency_weight: payload.recency_weight,
+        frequency_weight: payload.frequency_weight,
         context_lines: payload.context_lines.map(|c| c.min(20)),
     };
 
@@ -310,8 +347,17 @@ async fn handle_query(
 
     let search_res =
         tokio::task::spawn_blocking(move || -> Result<Vec<crate::storage::db::SearchResult>> {
-            let embedding = embedder.embed(&query_text)?;
-            db.search_chunks_hybrid(&query_text, &embedding, &options)
+            match mode {
+                "fts" => db.search_chunks_fts(&query_text, &options),
+                "vector" => {
+                    let embedding = embedder.embed(&query_text)?;
+                    db.search_chunks_enhanced(&embedding, &options)
+                }
+                _ => {
+                    let embedding = embedder.embed(&query_text)?;
+                    db.search_chunks_hybrid(&query_text, &embedding, &options)
+                }
+            }
         })
         .await;
 

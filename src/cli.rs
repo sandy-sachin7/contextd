@@ -43,6 +43,12 @@ pub enum Commands {
         /// Filter by path substrings (e.g. --paths src/,docs/)
         #[arg(long, value_delimiter = ',')]
         paths: Option<Vec<String>>,
+        /// Retrieval mode: hybrid (default), vector, or fts
+        #[arg(long, default_value = "hybrid")]
+        mode: String,
+        /// Emit results as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     /// Configure MCP for compatible AI tools
     Connect {
@@ -137,6 +143,8 @@ pub struct QueryCliOptions {
     pub before: Option<String>,
     pub file_types: Option<Vec<String>>,
     pub paths: Option<Vec<String>>,
+    pub mode: String,
+    pub json: bool,
 }
 
 pub async fn handle_query(config: &Config, query: &str, cli_opts: QueryCliOptions) -> Result<()> {
@@ -149,20 +157,24 @@ pub async fn handle_query(config: &Config, query: &str, cli_opts: QueryCliOption
         None => None,
     };
 
+    let mode = match cli_opts.mode.trim() {
+        "" | "hybrid" => "hybrid",
+        "vector" => "vector",
+        "fts" => "fts",
+        other => {
+            return Err(anyhow!(
+                "Unsupported --mode '{}': expected 'hybrid', 'vector', or 'fts'",
+                other
+            ));
+        }
+    };
+    let emit_json = cli_opts.json;
     let storage_cfg = config.storage.clone();
     let query_owned = query.to_string();
     let limit = cli_opts.limit.clamp(1, 100);
     let context_lines = cli_opts.context_lines.min(20);
 
     let results = tokio::task::spawn_blocking(move || -> Result<_> {
-        let embedder = Embedder::new(&storage_cfg)?;
-        let db = Database::open(
-            &storage_cfg.db_path,
-            embedder.embedding_dim(),
-            embedder.model_type(),
-        )?;
-        let embedding = embedder.embed(&query_owned)?;
-
         let options = SearchOptions {
             limit: Some(limit),
             start_time,
@@ -178,9 +190,32 @@ pub async fn handle_query(config: &Config, query: &str, cli_opts: QueryCliOption
             ..Default::default()
         };
 
-        db.search_chunks_hybrid(&query_owned, &embedding, &options)
+        if mode == "fts" {
+            let spec = crate::indexer::embeddings::lookup_model_spec(&storage_cfg.model_type)?;
+            let db = Database::open(&storage_cfg.db_path, spec.expected_dim, spec.id)?;
+            return db.search_chunks_fts(&query_owned, &options);
+        }
+
+        let embedder = Embedder::new(&storage_cfg)?;
+        let db = Database::open(
+            &storage_cfg.db_path,
+            embedder.embedding_dim(),
+            embedder.model_type(),
+        )?;
+        let embedding = embedder.embed(&query_owned)?;
+
+        if mode == "vector" {
+            db.search_chunks_enhanced(&embedding, &options)
+        } else {
+            db.search_chunks_hybrid(&query_owned, &embedding, &options)
+        }
     })
     .await??;
+
+    if emit_json {
+        println!("{}", serde_json::to_string_pretty(&results)?);
+        return Ok(());
+    }
 
     println!("Found {} results for '{}':", results.len(), query);
     for (i, res) in results.iter().enumerate() {

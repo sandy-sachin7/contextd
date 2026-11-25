@@ -105,6 +105,8 @@ async fn main() -> anyhow::Result<()> {
             before,
             file_types,
             paths,
+            mode,
+            json,
         } => {
             cli::handle_query(
                 &config,
@@ -117,6 +119,8 @@ async fn main() -> anyhow::Result<()> {
                     before,
                     file_types,
                     paths,
+                    mode,
+                    json,
                 },
             )
             .await?;

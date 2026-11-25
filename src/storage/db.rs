@@ -57,13 +57,43 @@ fn normalize_extension_filter(ext: &str) -> String {
     ext.trim().trim_start_matches('.').to_lowercase()
 }
 
+const FTS_STOPWORDS: &[&str] = &[
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in", "into", "is",
+    "it", "of", "on", "or", "that", "the", "this", "to", "via", "what", "when", "where", "which",
+    "with",
+];
+
 /// Tokenize a free-text query into sanitized FTS5 OR-joined quoted terms.
+/// Strips common English stopwords when meaningful tokens remain.
 /// Returns `None` if no searchable tokens exist.
 pub fn build_fts5_query(query_text: &str) -> Option<String> {
-    let tokens: Vec<String> = query_text
+    let raw_tokens: Vec<&str> = query_text
         .split(|c: char| !c.is_alphanumeric() && c != '_')
         .map(str::trim)
         .filter(|t| !t.is_empty())
+        .collect();
+
+    if raw_tokens.is_empty() {
+        return None;
+    }
+
+    let filtered: Vec<&str> = raw_tokens
+        .iter()
+        .copied()
+        .filter(|t| {
+            let lower = t.to_ascii_lowercase();
+            !FTS_STOPWORDS.contains(&lower.as_str())
+        })
+        .collect();
+
+    let chosen = if filtered.is_empty() {
+        raw_tokens
+    } else {
+        filtered
+    };
+
+    let tokens: Vec<String> = chosen
+        .into_iter()
         .take(32)
         .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
         .collect();
@@ -829,6 +859,103 @@ impl Database {
         Ok(())
     }
 
+    /// Tokenized SQLite FTS5 keyword search with SQL pre-filtering.
+    pub fn search_chunks_fts(
+        &self,
+        query_text: &str,
+        options: &SearchOptions,
+    ) -> Result<Vec<SearchResult>> {
+        let limit = options.limit.unwrap_or(10);
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let Some(fts_query) = build_fts5_query(query_text) else {
+            return Ok(Vec::new());
+        };
+
+        let conn = self.read_conn()?;
+        let mut sql = String::from(
+            "SELECT c.id, c.content, f.path, f.last_modified, f.id, c.start_offset, c.end_offset, fts.rank
+             FROM chunks_fts fts
+             JOIN chunks c ON fts.rowid = c.id
+             JOIN files f ON c.file_id = f.id
+             WHERE fts.content MATCH ?",
+        );
+
+        let mut sql_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        sql_params.push(Box::new(fts_query));
+
+        append_file_filters(&mut sql, &mut sql_params, options);
+
+        sql.push_str(" ORDER BY fts.rank LIMIT ?");
+        sql_params.push(Box::new(limit as i64));
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            sql_params.iter().map(|p| p.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)? as u64,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)? as u64,
+                    row.get::<_, i64>(6)? as u64,
+                    row.get::<_, f64>(7)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut fts_results = Vec::with_capacity(rows.len());
+        for (
+            rank_idx,
+            (id, content, file_path, last_modified, file_id, start_offset, end_offset, _bm25),
+        ) in rows.into_iter().enumerate()
+        {
+            // Normalize rank position into (0.0, 1.0] for callers using FTS-only mode.
+            let score = 1.0 / (1.0 + rank_idx as f32);
+            if let Some(min) = options.min_score {
+                if score < min {
+                    continue;
+                }
+            }
+            let file_type = extract_extension(&file_path);
+            fts_results.push(SearchResult {
+                id,
+                file_id,
+                content,
+                score,
+                file_path,
+                file_type,
+                last_modified,
+                start_offset,
+                end_offset,
+                ..Default::default()
+            });
+        }
+
+        if let Some(ctx_lines) = options.context_lines.filter(|&n| n > 0) {
+            for res in &mut fts_results {
+                if let Some((before, after, line_start, line_end)) = populate_context_lines(
+                    &res.file_path,
+                    res.start_offset as usize,
+                    res.end_offset as usize,
+                    ctx_lines,
+                ) {
+                    res.context_before = before;
+                    res.context_after = after;
+                    res.line_start = Some(line_start);
+                    res.line_end = Some(line_end);
+                }
+            }
+        }
+
+        Ok(fts_results)
+    }
+
     /// Hybrid search combining sqlite-vec KNN and tokenized FTS5 via normalized RRF.
     pub fn search_chunks_hybrid(
         &self,
@@ -858,59 +985,18 @@ impl Database {
         let vector_results = self.search_chunks_enhanced(query_embedding, &vector_options)?;
 
         // 2. Tokenized FTS5 Search with SQL filters applied BEFORE LIMIT
-        let mut fts_results = Vec::new();
-        if let Some(fts_query) = build_fts5_query(query_text) {
-            let conn = self.read_conn()?;
-            let mut sql = String::from(
-                "SELECT c.id, c.content, f.path, f.last_modified, f.id, c.start_offset, c.end_offset
-                 FROM chunks_fts fts
-                 JOIN chunks c ON fts.rowid = c.id
-                 JOIN files f ON c.file_id = f.id
-                 WHERE fts.content MATCH ?",
-            );
-
-            let mut sql_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            sql_params.push(Box::new(fts_query));
-
-            append_file_filters(&mut sql, &mut sql_params, options);
-
-            sql.push_str(" ORDER BY fts.rank LIMIT ?");
-            sql_params.push(Box::new(candidate_limit as i64));
-
-            let mut stmt = conn.prepare(&sql)?;
-            let params_refs: Vec<&dyn rusqlite::ToSql> =
-                sql_params.iter().map(|p| p.as_ref()).collect();
-
-            let rows = stmt
-                .query_map(params_refs.as_slice(), |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3)? as u64,
-                        row.get::<_, i64>(4)?,
-                        row.get::<_, i64>(5)? as u64,
-                        row.get::<_, i64>(6)? as u64,
-                    ))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-
-            for (id, content, file_path, last_modified, file_id, start_offset, end_offset) in rows {
-                let file_type = extract_extension(&file_path);
-                fts_results.push(SearchResult {
-                    id,
-                    file_id,
-                    content,
-                    score: 0.0,
-                    file_path,
-                    file_type,
-                    last_modified,
-                    start_offset,
-                    end_offset,
-                    ..Default::default()
-                });
-            }
-        }
+        let fts_options = SearchOptions {
+            limit: Some(candidate_limit),
+            start_time: options.start_time,
+            end_time: options.end_time,
+            file_types: options.file_types.clone(),
+            paths: options.paths.clone(),
+            min_score: None,
+            recency_weight: None,
+            frequency_weight: None,
+            context_lines: None,
+        };
+        let fts_results = self.search_chunks_fts(query_text, &fts_options)?;
 
         // 3. Normalized Reciprocal Rank Fusion (RRF) into [0.0, 1.0]
         let mut rrf_scores: HashMap<i64, f32> = HashMap::new();
@@ -951,18 +1037,18 @@ impl Database {
                 } else {
                     0.0
                 };
-                // Blend normalized RRF with vector similarity when available so score reflects
-                // both rank consensus and actual semantic relevance.
+                // Favor normalized RRF consensus while keeping a light vector similarity tie-breaker
+                // so prose cosine inflation does not override strong hybrid rank agreement.
                 let score = match (
                     vec_similarity.get(&res.id),
                     has_fts_hit.contains_key(&res.id),
                 ) {
                     (Some(&vsim), true) => {
-                        ((norm_rrf + vsim.clamp(0.0, 1.0)) * 0.5).clamp(0.0, 1.0)
+                        (norm_rrf * 0.85 + vsim.clamp(0.0, 1.0) * 0.15).clamp(0.0, 1.0)
                     }
                     (Some(&vsim), false) => {
                         if !fts_results.is_empty() {
-                            (norm_rrf * 0.5 + vsim.clamp(0.0, 1.0) * 0.5).clamp(0.0, 1.0)
+                            (norm_rrf * 0.85 + vsim.clamp(0.0, 1.0) * 0.15).clamp(0.0, 1.0)
                         } else {
                             vsim.clamp(0.0, 1.0)
                         }
@@ -1318,7 +1404,7 @@ pub struct SearchOptions {
 }
 
 /// Enhanced search result with metadata
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default, Debug, serde::Serialize)]
 pub struct SearchResult {
     pub id: i64,
     pub file_id: i64,

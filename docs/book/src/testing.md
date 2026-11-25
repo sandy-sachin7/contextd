@@ -6,7 +6,7 @@
 
 | Suite | Command | Coverage |
 |-------|---------|----------|
-| **Unit & Library Tests** | `cargo test --lib --bins --locked` | Config & trust isolation, Tree-sitter/PDF chunking & UTF-8 budgets, `safe_read` (`O_NOFOLLOW`), ignore/secret exclusions, sandboxed plugins, SQLite WAL/`sqlite-vec`/FTS5 hybrid search, HTTP API security middleware, MCP server, `connect`, `download` |
+| **Unit & Library Tests** | `cargo test --lib --bins --locked` | Config & trust isolation, Tree-sitter/PDF chunking & UTF-8 budgets, `safe_read` (`O_NOFOLLOW`), ignore/secret exclusions, external parser plugins, SQLite WAL/`sqlite-vec`/FTS5 hybrid search, HTTP API security middleware, MCP server, `connect`, `download` |
 | **Doc Tests** | `cargo test --doc --locked` | Crate-level embedded library quickstart in `src/lib.rs` |
 | **Integration Tests** | `cargo test --tests --locked` | `watcher_test` (file events/renames/deletes), `load_test` (concurrent HTTP API + rapid edits), `zero_config_test` (model cache & setup) |
 | **Embedded Example** | `cargo run --example embedded_search` | Offline Tree-sitter + SQLite WAL hybrid search library usage |

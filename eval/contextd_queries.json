@@ -1,0 +1,218 @@
+[
+  {
+    "id": "sem-01",
+    "category": "semantic",
+    "query": "prevent browser pages from talking to local HTTP server via forged domain",
+    "expected_files": ["src/api/mod.rs"]
+  },
+  {
+    "id": "sem-02",
+    "category": "semantic",
+    "query": "stop symbolic link attacks that escape the watched workspace directory",
+    "expected_files": ["src/indexer/safe_read.rs"]
+  },
+  {
+    "id": "sem-03",
+    "category": "semantic",
+    "query": "merge dense similarity rankings with keyword matches into one score",
+    "expected_files": ["src/storage/db.rs"]
+  },
+  {
+    "id": "sem-04",
+    "category": "semantic",
+    "query": "split source code functions and classes using grammar parse trees",
+    "expected_files": ["src/indexer/chunker.rs"]
+  },
+  {
+    "id": "sem-05",
+    "category": "semantic",
+    "query": "verify downloaded neural network weights against cryptographic checksums",
+    "expected_files": ["src/download.rs"]
+  },
+  {
+    "id": "sem-06",
+    "category": "semantic",
+    "query": "cancel an in-flight agent tool request over standard input and output",
+    "expected_files": ["src/mcp/server.rs"]
+  },
+  {
+    "id": "sem-07",
+    "category": "semantic",
+    "query": "automatically register this tool inside editor JSON and TOML settings with backups",
+    "expected_files": ["src/connect.rs"]
+  },
+  {
+    "id": "sem-08",
+    "category": "semantic",
+    "query": "block untrusted repository configuration files from overriding server bind address",
+    "expected_files": ["src/config.rs"]
+  },
+  {
+    "id": "sem-09",
+    "category": "semantic",
+    "query": "avoid re-embedding unchanged source files by comparing content digests",
+    "expected_files": ["src/daemon.rs", "src/storage/db.rs"]
+  },
+  {
+    "id": "sem-10",
+    "category": "semantic",
+    "query": "kill external document extractor subprocesses that hang or flood stdout",
+    "expected_files": ["src/indexer/plugins.rs"]
+  },
+  {
+    "id": "sem-11",
+    "category": "semantic",
+    "query": "skip credential files private keys and build directories automatically",
+    "expected_files": ["src/indexer/ignore.rs", "src/daemon.rs"]
+  },
+  {
+    "id": "sem-12",
+    "category": "semantic",
+    "query": "sort text chunks by length before neural inference to avoid padding waste",
+    "expected_files": ["src/indexer/embeddings.rs"]
+  },
+  {
+    "id": "exact-01",
+    "category": "exact",
+    "query": "is_valid_loopback_host_header",
+    "expected_files": ["src/api/mod.rs"]
+  },
+  {
+    "id": "exact-02",
+    "category": "exact",
+    "query": "open_file_under_roots",
+    "expected_files": ["src/indexer/safe_read.rs"]
+  },
+  {
+    "id": "exact-03",
+    "category": "exact",
+    "query": "build_fts5_query",
+    "expected_files": ["src/storage/db.rs"]
+  },
+  {
+    "id": "exact-04",
+    "category": "exact",
+    "query": "chunk_by_type_with_limits",
+    "expected_files": ["src/indexer/chunker.rs"]
+  },
+  {
+    "id": "exact-05",
+    "category": "exact",
+    "query": "migrate_legacy_model_cache",
+    "expected_files": ["src/download.rs"]
+  },
+  {
+    "id": "exact-06",
+    "category": "exact",
+    "query": "notifications/cancelled",
+    "expected_files": ["src/mcp/server.rs"]
+  },
+  {
+    "id": "exact-07",
+    "category": "exact",
+    "query": "ConnectScope",
+    "expected_files": ["src/connect.rs"]
+  },
+  {
+    "id": "exact-08",
+    "category": "exact",
+    "query": "load_resolved_with_trust",
+    "expected_files": ["src/config.rs"]
+  },
+  {
+    "id": "exact-09",
+    "category": "exact",
+    "query": "PathCoordinator",
+    "expected_files": ["src/daemon.rs"]
+  },
+  {
+    "id": "exact-10",
+    "category": "exact",
+    "query": "run_parser_with_options",
+    "expected_files": ["src/indexer/plugins.rs"]
+  },
+  {
+    "id": "exact-11",
+    "category": "exact",
+    "query": "parse_timestamp_or_date",
+    "expected_files": ["src/cli.rs"]
+  },
+  {
+    "id": "exact-12",
+    "category": "exact",
+    "query": "pool_and_normalize",
+    "expected_files": ["src/indexer/embeddings.rs"]
+  },
+  {
+    "id": "mixed-01",
+    "category": "mixed",
+    "query": "SQLite WAL reader connection pool r2d2",
+    "expected_files": ["src/storage/db.rs"]
+  },
+  {
+    "id": "mixed-02",
+    "category": "mixed",
+    "query": "bearer token constant time auth middleware axum",
+    "expected_files": ["src/api/mod.rs"]
+  },
+  {
+    "id": "mixed-03",
+    "category": "mixed",
+    "query": "ONNX Runtime session intra threads mean CLS pooling",
+    "expected_files": ["src/indexer/embeddings.rs"]
+  },
+  {
+    "id": "mixed-04",
+    "category": "mixed",
+    "query": "file watcher debouncing notify-debouncer-mini",
+    "expected_files": ["src/indexer/watcher.rs", "src/daemon.rs"]
+  },
+  {
+    "id": "mixed-05",
+    "category": "mixed",
+    "query": "MCP JSON-RPC protocolVersion negotiation stdio",
+    "expected_files": ["src/mcp/server.rs"]
+  },
+  {
+    "id": "mixed-06",
+    "category": "mixed",
+    "query": "PDF text extraction chunking limits",
+    "expected_files": ["src/indexer/chunker.rs"]
+  },
+  {
+    "id": "mixed-07",
+    "category": "mixed",
+    "query": "recency decay age_hours and query_hits frequency boost",
+    "expected_files": ["src/storage/db.rs"]
+  },
+  {
+    "id": "mixed-08",
+    "category": "mixed",
+    "query": "reconcile startup index prune deleted files under watch roots",
+    "expected_files": ["src/daemon.rs"]
+  },
+  {
+    "id": "mixed-09",
+    "category": "mixed",
+    "query": "configure Claude Code Cursor and Codex MCP entries",
+    "expected_files": ["src/connect.rs"]
+  },
+  {
+    "id": "mixed-10",
+    "category": "mixed",
+    "query": "context lines before and after byte offsets UTF-8 boundary",
+    "expected_files": ["src/storage/db.rs"]
+  },
+  {
+    "id": "mixed-11",
+    "category": "mixed",
+    "query": "plugin command flag injection double dash separator",
+    "expected_files": ["src/indexer/plugins.rs"]
+  },
+  {
+    "id": "mixed-12",
+    "category": "mixed",
+    "query": "respect gitignore and contextignore patterns when scanning",
+    "expected_files": ["src/indexer/ignore.rs", "src/daemon.rs"]
+  }
+]

@@ -29,6 +29,13 @@ pub const MODEL_MANIFESTS: &[ModelDownloadManifest] = &[
         tokenizer_sha256: "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0",
     },
     ModelDownloadManifest {
+        model_type: "all-minilm-l6-v2-q8",
+        model_url: "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/751bff37182d3f1213fa05d7196b954e230abad9/onnx/model_quantized.onnx",
+        model_sha256: "afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1",
+        tokenizer_url: "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/751bff37182d3f1213fa05d7196b954e230abad9/tokenizer.json",
+        tokenizer_sha256: "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0",
+    },
+    ModelDownloadManifest {
         model_type: "all-mpnet-base-v2",
         model_url: "https://huggingface.co/sentence-transformers/all-mpnet-base-v2/resolve/e8c3b32edf5434bc2275fc9bab85f82640a19130/onnx/model.onnx",
         model_sha256: "74187b16d9c946fea252e120cfd7a12c5779d8b8b86838a2e4c56573c47941bd",

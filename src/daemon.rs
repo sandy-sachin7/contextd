@@ -291,6 +291,34 @@ pub async fn run_with_components(
         }
     });
 
+    // Concurrent file preparation + cross-file length-sorted ONNX batching
+    let (prepared_tx, mut prepared_rx) = mpsc::channel::<PreparedFile>(64);
+    let batch_db = db.clone();
+    let batch_embedder = embedder.clone();
+    let batch_pb = pb.clone();
+    let consumer_handle = tokio::spawn(async move {
+        const INITIAL_SCAN_BATCH_CHUNKS: usize = 128;
+        let mut pending: Vec<PreparedFile> = Vec::new();
+        let mut pending_chunks = 0usize;
+
+        while let Some(prepared) = prepared_rx.recv().await {
+            pending_chunks += prepared.chunks.len();
+            pending.push(prepared);
+            if pending_chunks >= INITIAL_SCAN_BATCH_CHUNKS {
+                let batch = std::mem::take(&mut pending);
+                let files_in_batch = batch.len() as u64;
+                pending_chunks = 0;
+                commit_prepared_batch(batch, batch_db.clone(), batch_embedder.clone()).await;
+                batch_pb.inc(files_in_batch);
+            }
+        }
+        if !pending.is_empty() {
+            let files_in_batch = pending.len() as u64;
+            commit_prepared_batch(pending, batch_db, batch_embedder).await;
+            batch_pb.inc(files_in_batch);
+        }
+    });
+
     while let Some(norm_path) = scan_rx.recv().await {
         seen_paths.insert(norm_path.to_string_lossy().to_string());
 
@@ -300,27 +328,31 @@ pub async fn run_with_components(
 
         let config = config.clone();
         let db = db.clone();
-        let embedder = embedder.clone();
         let pb = pb.clone();
         let plugin_warned = plugin_warned.clone();
         let watch_roots = canonical_watch_roots.clone();
+        let prepared_tx = prepared_tx.clone();
 
         scan_tasks.spawn(async move {
             pb.set_message(format!(
                 "Indexing {:?}",
                 norm_path.file_name().unwrap_or_default()
             ));
-            index_file_with_roots(
+            let prepared = prepare_file_for_indexing(
                 norm_path,
                 config,
                 db,
-                embedder,
                 plugin_warned,
                 watch_roots.as_ref().clone(),
             )
             .await;
             drop(permit);
-            pb.inc(1);
+            match prepared {
+                Some(file) => {
+                    let _ = prepared_tx.send(file).await;
+                }
+                None => pb.inc(1),
+            }
         });
     }
 
@@ -332,6 +364,10 @@ pub async fn run_with_components(
         if let Err(err) = res {
             eprintln!("Initial scan task panicked: {}", err);
         }
+    }
+    drop(prepared_tx);
+    if let Err(err) = consumer_handle.await {
+        eprintln!("Initial scan batch consumer panicked: {}", err);
     }
 
     // Reconcile DB against disk: remove paths under watched roots that no longer exist or are ignored
@@ -672,6 +708,17 @@ pub async fn index_file(
     index_file_with_roots(path, config, db, embedder, plugin_warned, watch_roots).await;
 }
 
+struct PreparedFile {
+    path: PathBuf,
+    path_str: String,
+    modified_secs: u64,
+    modified_ns: i64,
+    file_size: u64,
+    content_hash: String,
+    file_metadata: serde_json::Value,
+    chunks: Vec<chunker::Chunk>,
+}
+
 async fn index_file_with_roots(
     path: PathBuf,
     config: Arc<Config>,
@@ -680,6 +727,20 @@ async fn index_file_with_roots(
     plugin_warned: Arc<AtomicBool>,
     watch_roots: Vec<PathBuf>,
 ) {
+    if let Some(prepared) =
+        prepare_file_for_indexing(path, config, db.clone(), plugin_warned, watch_roots).await
+    {
+        commit_prepared_batch(vec![prepared], db, embedder).await;
+    }
+}
+
+async fn prepare_file_for_indexing(
+    path: PathBuf,
+    config: Arc<Config>,
+    db: Database,
+    plugin_warned: Arc<AtomicBool>,
+    watch_roots: Vec<PathBuf>,
+) -> Option<PreparedFile> {
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
@@ -698,22 +759,20 @@ async fn index_file_with_roots(
     let (file, metadata) = match open_res {
         Ok(Ok(opened)) => opened,
         Ok(Err(err)) => {
-            // Transient open failures (permissions, network FS) must not drop a
-            // valid index row. Deletions and symlink swaps are pruned by the
-            // watcher event handler before this function is called.
+            // Transient open failures must not drop a previously valid index row.
             eprintln!("Failed opening {:?} beneath watch roots: {}", path, err);
-            return;
+            return None;
         }
         Err(err) => {
             eprintln!("Index task failed for {:?}: {}", path, err);
-            return;
+            return None;
         }
     };
 
     let file_size = metadata.len();
     if file_size > config.watch.max_file_size {
         prune_indexed_file(&db, &path_str).await;
-        return;
+        return None;
     }
 
     let (modified_secs, modified_ns) = extract_mtime(&metadata);
@@ -724,7 +783,7 @@ async fn index_file_with_roots(
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    // 2. Fast-path DB check via (mtime_ns, file_size)
+    // Fast-path DB check via (mtime_ns, file_size)
     let check_db = db.clone();
     let check_path = path_str.clone();
     let reindex_state = match tokio::task::spawn_blocking(move || {
@@ -735,16 +794,16 @@ async fn index_file_with_roots(
         Ok(Ok(state)) => state,
         Ok(Err(e)) => {
             eprintln!("DB reindex check error for {:?}: {}", path, e);
-            return;
+            return None;
         }
         Err(e) => {
             eprintln!("Task error checking {:?}: {}", path, e);
-            return;
+            return None;
         }
     };
 
     if reindex_state == ReindexCheck::Unchanged {
-        return;
+        return None;
     }
 
     // Read through the same handle and enforce the limit even if the file grows.
@@ -760,15 +819,15 @@ async fn index_file_with_roots(
         Ok(Ok(bytes)) if bytes.len() as u64 <= config.watch.max_file_size => bytes,
         Ok(Ok(_)) => {
             prune_indexed_file(&db, &path_str).await;
-            return;
+            return None;
         }
         Ok(Err(e)) => {
             eprintln!("Failed reading {:?}: {}", path, e);
-            return;
+            return None;
         }
         Err(e) => {
             eprintln!("Index task failed reading {:?}: {}", path, e);
-            return;
+            return None;
         }
     };
 
@@ -782,11 +841,11 @@ async fn index_file_with_roots(
                 touch_db.touch_file_metadata(&touch_path, modified_secs, modified_ns, file_size)
             })
             .await;
-            return;
+            return None;
         }
     }
 
-    // 4. Parse / chunk (with plugin trust enforcement)
+    // Parse / chunk (with plugin trust enforcement)
     let active_plugin_cmd = match config.plugins.get(&ext) {
         Some(cmd) if config.plugins_allowed() => Some(cmd.clone()),
         Some(_) => {
@@ -820,14 +879,13 @@ async fn index_file_with_roots(
         let snapshot = match snapshot_res {
             Ok(Ok(snapshot)) => snapshot,
             Ok(Err(error)) => {
+                // Preserve last known good index on transient parser snapshot errors.
                 eprintln!("Failed to create parser snapshot for {:?}: {}", path, error);
-                prune_indexed_file(&db, &path_str).await;
-                return;
+                return None;
             }
             Err(error) => {
                 eprintln!("Parser snapshot task failed for {:?}: {}", path, error);
-                prune_indexed_file(&db, &path_str).await;
-                return;
+                return None;
             }
         };
         let plugin_res = plugins::run_parser(&cmd, snapshot.path()).await;
@@ -864,13 +922,13 @@ async fn index_file_with_roots(
     } else {
         if looks_binary(&raw_bytes) {
             prune_indexed_file(&db, &path_str).await;
-            return;
+            return None;
         }
         let content = match String::from_utf8(raw_bytes) {
             Ok(s) => s,
             Err(_) => {
                 prune_indexed_file(&db, &path_str).await;
-                return;
+                return None;
             }
         };
         let ext_clone = ext.clone();
@@ -887,9 +945,9 @@ async fn index_file_with_roots(
     let chunks = match chunks_result {
         Ok(c) => c,
         Err(e) => {
+            // Preserve last known good index on transient parser/chunking failures.
             eprintln!("Error chunking file {:?}: {}", path, e);
-            prune_indexed_file(&db, &path_str).await;
-            return;
+            return None;
         }
     };
 
@@ -900,78 +958,104 @@ async fn index_file_with_roots(
         "extension": ext
     });
 
-    // 5. Batch-embed + commit all chunks in a single SQLite transaction (offloaded to blocking pool)
-    let commit_path = path_str.clone();
-    let commit_hash = content_hash;
-    let commit_db = db.clone();
-    let commit_embedder = embedder.clone();
+    Some(PreparedFile {
+        path,
+        path_str,
+        modified_secs,
+        modified_ns,
+        file_size,
+        content_hash,
+        file_metadata,
+        chunks,
+    })
+}
 
-    let res = tokio::task::spawn_blocking(move || -> Result<usize> {
-        let texts: Vec<&str> = chunks.iter().map(|c| c.content.as_str()).collect();
-        let embeddings: Vec<Vec<f32>> = if texts.is_empty() {
+async fn commit_prepared_batch(
+    batch: Vec<PreparedFile>,
+    db: Database,
+    embedder: Arc<dyn TextEmbedder>,
+) {
+    if batch.is_empty() {
+        return;
+    }
+
+    let res = tokio::task::spawn_blocking(move || -> Result<()> {
+        let total_chunks: usize = batch.iter().map(|f| f.chunks.len()).sum();
+        let mut texts: Vec<&str> = Vec::with_capacity(total_chunks);
+        for file in &batch {
+            for chunk in &file.chunks {
+                texts.push(chunk.content.as_str());
+            }
+        }
+
+        let embeddings = if texts.is_empty() {
             Vec::new()
         } else {
-            let mut all = Vec::with_capacity(texts.len());
-            for batch in texts.chunks(32) {
-                let batch_embs = commit_embedder.embed_batch(batch)?;
-                all.extend(batch_embs);
-            }
-            all
+            embedder.embed_batch(&texts)?
         };
 
-        let merged_meta: Vec<String> = chunks
-            .iter()
-            .map(|chunk| {
-                let mut m = file_metadata.clone();
-                if let Some(cm) = &chunk.metadata {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(cm) {
-                        if let (Some(obj), Some(parsed_obj)) =
-                            (m.as_object_mut(), parsed.as_object())
-                        {
-                            for (k, v) in parsed_obj {
-                                obj.insert(k.clone(), v.clone());
+        let mut offset = 0usize;
+        for file in &batch {
+            let count = file.chunks.len();
+            let file_embs = &embeddings[offset..offset + count];
+            offset += count;
+
+            let merged_meta: Vec<String> = file
+                .chunks
+                .iter()
+                .map(|chunk| {
+                    let mut m = file.file_metadata.clone();
+                    if let Some(cm) = &chunk.metadata {
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(cm) {
+                            if let (Some(obj), Some(parsed_obj)) =
+                                (m.as_object_mut(), parsed.as_object())
+                            {
+                                for (k, v) in parsed_obj {
+                                    obj.insert(k.clone(), v.clone());
+                                }
                             }
                         }
                     }
+                    m.to_string()
+                })
+                .collect();
+
+            let inputs: Vec<ChunkInput<'_>> = file
+                .chunks
+                .iter()
+                .enumerate()
+                .map(|(idx, chunk)| ChunkInput {
+                    start: chunk.start,
+                    end: chunk.end,
+                    content: &chunk.content,
+                    embedding: file_embs.get(idx).map(|v| v.as_slice()),
+                    metadata: merged_meta.get(idx).map(|s| s.as_str()),
+                })
+                .collect();
+
+            match db.index_file_chunks(
+                &file.path_str,
+                file.modified_secs,
+                file.modified_ns,
+                file.file_size,
+                &file.content_hash,
+                &inputs,
+            ) {
+                Ok(_) => println!("Indexed {} chunks for {:?}", count, file.path),
+                Err(e) => {
+                    // Preserve last known good index if DB commit fails.
+                    eprintln!("Error indexing {:?}: {}", file.path, e);
                 }
-                m.to_string()
-            })
-            .collect();
-
-        let inputs: Vec<ChunkInput<'_>> = chunks
-            .iter()
-            .enumerate()
-            .map(|(idx, chunk)| ChunkInput {
-                start: chunk.start,
-                end: chunk.end,
-                content: &chunk.content,
-                embedding: embeddings.get(idx).map(|v| v.as_slice()),
-                metadata: merged_meta.get(idx).map(|s| s.as_str()),
-            })
-            .collect();
-
-        commit_db.index_file_chunks(
-            &commit_path,
-            modified_secs,
-            modified_ns,
-            file_size,
-            &commit_hash,
-            &inputs,
-        )?;
-        Ok(chunks.len())
+            }
+        }
+        Ok(())
     })
     .await;
 
     match res {
-        Ok(Ok(count)) => println!("Indexed {} chunks for {:?}", count, path),
-        Ok(Err(e)) => {
-            eprintln!("Error indexing {:?}: {}", path, e);
-            prune_indexed_file(&db, &path_str).await;
-        }
-        Err(e) => {
-            eprintln!("Indexing task panicked for {:?}: {}", path, e);
-            prune_indexed_file(&db, &path_str).await;
-        }
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => eprintln!("Error embedding batch: {}", e),
+        Err(e) => eprintln!("Indexing batch task panicked: {}", e),
     }
 }
 
@@ -1035,5 +1119,110 @@ mod tests {
         assert!(!coord.finish_or_reclaim(&p));
         // Subsequent event can claim again
         assert!(coord.try_claim(&p));
+    }
+
+    struct ToggleEmbedder {
+        fail: AtomicBool,
+    }
+
+    impl TextEmbedder for ToggleEmbedder {
+        fn embed(&self, _text: &str) -> Result<Vec<f32>> {
+            if self.fail.load(Ordering::Relaxed) {
+                anyhow::bail!("simulated embed failure");
+            }
+            Ok(vec![1.0, 0.0, 0.0, 0.0])
+        }
+
+        fn embedding_dim(&self) -> usize {
+            4
+        }
+
+        fn model_type(&self) -> &str {
+            "test-model"
+        }
+    }
+
+    #[tokio::test]
+    async fn test_index_file_preserves_last_known_good_index_on_embed_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("auth.rs");
+        fs::write(&file_path, "pub fn verify_token() -> bool { true }\n").unwrap();
+
+        let mut cfg = Config::default();
+        cfg.watch.paths = vec![dir.path().to_path_buf()];
+        let db = Database::open(dir.path().join("test.db"), 4, "test-model").unwrap();
+        let embedder = Arc::new(ToggleEmbedder {
+            fail: AtomicBool::new(false),
+        });
+        let cfg = Arc::new(cfg);
+        let warned = Arc::new(AtomicBool::new(false));
+
+        index_file(
+            file_path.clone(),
+            cfg.clone(),
+            db.clone(),
+            embedder.clone(),
+            warned.clone(),
+        )
+        .await;
+        assert_eq!(db.get_stats().unwrap().file_count, 1);
+
+        // Modify file and fail embedding: previously indexed chunks must remain intact.
+        embedder.fail.store(true, Ordering::Relaxed);
+        fs::write(&file_path, "pub fn verify_token_v2() -> bool { false }\n").unwrap();
+
+        index_file(file_path, cfg, db.clone(), embedder, warned).await;
+
+        assert_eq!(db.get_stats().unwrap().file_count, 1);
+        let hits = db
+            .search_chunks_fts(
+                "verify_token",
+                &crate::storage::db::SearchOptions::default(),
+            )
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].content.contains("verify_token()"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_index_file_preserves_last_known_good_index_on_plugin_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("notes.custom");
+        fs::write(&file_path, "initial document text").unwrap();
+
+        let mut cfg = Config::default();
+        cfg.watch.paths = vec![dir.path().to_path_buf()];
+        cfg.security.allow_workspace_plugins = true;
+        cfg.plugins
+            .insert("custom".to_string(), vec!["cat".to_string()]);
+
+        let db = Database::open(dir.path().join("test.db"), 4, "test-model").unwrap();
+        let embedder = Arc::new(ToggleEmbedder {
+            fail: AtomicBool::new(false),
+        });
+        let warned = Arc::new(AtomicBool::new(false));
+
+        index_file(
+            file_path.clone(),
+            Arc::new(cfg.clone()),
+            db.clone(),
+            embedder.clone(),
+            warned.clone(),
+        )
+        .await;
+        assert_eq!(db.get_stats().unwrap().file_count, 1);
+
+        // Switch plugin to failing command and update file: last known good index must survive.
+        cfg.plugins
+            .insert("custom".to_string(), vec!["false".to_string()]);
+        fs::write(&file_path, "updated document text").unwrap();
+
+        index_file(file_path, Arc::new(cfg), db.clone(), embedder, warned).await;
+        assert_eq!(db.get_stats().unwrap().file_count, 1);
+        let hits = db
+            .search_chunks_fts("initial", &crate::storage::db::SearchOptions::default())
+            .unwrap();
+        assert_eq!(hits.len(), 1);
     }
 }

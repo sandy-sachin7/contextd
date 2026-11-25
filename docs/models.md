@@ -6,7 +6,8 @@ contextd supports multiple local ONNX embedding models for different speed/quali
 
 | Model | Dimensions | Pooling | Best For |
 |-------|------------|---------|----------|
-| `all-minilm-l6-v2` (default) | 384 | Mean | General purpose, fast inference |
+| `all-minilm-l6-v2` (default) | 384 | Mean | General purpose FP32 (~91 MB) |
+| `all-minilm-l6-v2-q8` | 384 | Mean | Quantized int8 (~22 MB), faster CPU indexing and lower cold query latency |
 | `all-mpnet-base-v2` | 768 | Mean | Higher quality, recommended for code |
 | `bge-small-en-v1.5` | 384 | CLS | Balanced quality/speed for retrieval |
 

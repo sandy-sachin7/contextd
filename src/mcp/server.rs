@@ -10,8 +10,9 @@ use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::task::{AbortHandle, JoinSet};
 
-const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
-const LATEST_PROTOCOL_VERSION: &str = "2025-06-18";
+const SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
+    &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
 const MAX_LIMIT: usize = 100;
 const MAX_MCP_LINE_BYTES: usize = 16 * 1024 * 1024;
 

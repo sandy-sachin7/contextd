@@ -53,15 +53,15 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def find_model_dir() -> Path:
+def find_model_dir(model_type: str = "all-minilm-l6-v2") -> Path:
     candidates = [
         Path.home() / ".local" / "share" / "contextd" / "models",
         Path.home() / "Library" / "Application Support" / "contextd" / "models",
     ]
     for c in candidates:
-        if (c / "all-minilm-l6-v2").exists():
+        if (c / model_type).exists():
             return c
-    raise FileNotFoundError("No cached all-minilm-l6-v2 model found. Run `contextd setup` first.")
+    raise FileNotFoundError(f"No cached {model_type} model found. Run `contextd setup` first.")
 
 
 def get_rss_mb(pid: int) -> float | None:
@@ -91,11 +91,12 @@ def http_json(url: str, payload: dict | None = None) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", type=Path, default=REPO_ROOT)
+    parser.add_argument("--model", default="all-minilm-l6-v2")
     args = parser.parse_args()
 
     target_dir = args.target.resolve()
     bin_path = find_contextd_bin()
-    model_dir = find_model_dir()
+    model_dir = find_model_dir(args.model)
     version = subprocess.check_output([bin_path, "--version"], text=True).strip()
     bin_mb = round(Path(bin_path).stat().st_size / (1024 * 1024), 1)
     port = find_free_port()
@@ -114,7 +115,7 @@ port = {port}
 [storage]
 db_path = {json.dumps(str(db_path))}
 model_path = {json.dumps(str(model_dir))}
-model_type = "all-minilm-l6-v2"
+model_type = {json.dumps(args.model)}
 
 [watch]
 paths = [{json.dumps(str(target_dir))}]

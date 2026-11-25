@@ -23,9 +23,9 @@
 ## Why contextd?
 
 - **100% Local & Private** — Embeddings, vector KNN, and full-text indexing run locally on your machine. Source code never leaves disk.
-- **MCP Native (`2025-06-18`)** — Hardened stdio JSON-RPC 2.0 server with one-command auto-configuration for **9 AI tools** (`Claude Desktop`, `Claude Code`, `Cursor`, `VS Code Copilot`, `Copilot CLI`, `OpenCode`, `Continue`, `Antigravity`, `Codex`).
+- **MCP Native (`2025-11-25`)** — Hardened stdio JSON-RPC 2.0 server with one-command auto-configuration for **9 AI tools** (`Claude Desktop`, `Claude Code`, `Cursor`, `VS Code Copilot`, `Copilot CLI`, `OpenCode`, `Continue`, `Antigravity`, `Codex`).
 - **True Hybrid Search** — Combines `sqlite-vec` KNN vector similarity and tokenized SQLite FTS5 keyword search via normalized Reciprocal Rank Fusion (RRF), plus recency decay and frequency signals.
-- **Polyglot AST Chunking** — Tree-sitter semantic splitting for Rust, Python, JavaScript/JSX, TypeScript/TSX, and Go, plus Markdown header splitting, built-in PDF extraction, and sandboxed external format plugins.
+- **Polyglot AST Chunking** — Tree-sitter semantic splitting for Rust, Python, JavaScript/JSX, TypeScript/TSX, and Go, plus Markdown header splitting, built-in PDF extraction, and timeout- and output-capped external parser subprocesses.
 - **Concurrent SQLite WAL Engine** — Dedicated read-only `r2d2` reader pool, single transactional writer, `blake3` incremental hashing, and batched ONNX Runtime inference.
 - **Hardened by Default** — Loopback-only binding with DNS-rebinding `Host` checks, mandatory Bearer auth on non-loopback binds, untrusted workspace config isolation, `O_NOFOLLOW` symlink-safe reads, default secret/binary exclusions, and SHA-256 pinned model downloads.
 
@@ -86,8 +86,8 @@ contextd connect --all
 
 ```mermaid
 flowchart LR
-    W["File Watcher + safe_read (O_NOFOLLOW)"] --> C["Tree-sitter / PDF / Sandboxed Plugin Chunker"]
-    C --> E["Batched ONNX Embedder (SHA-256 Pinned)"]
+    W["File Watcher + safe_read (O_NOFOLLOW)"] --> C["Tree-sitter / PDF / External Parser Chunker"]
+    C --> E["Length-Sorted Batched ONNX Embedder (SHA-256 Pinned)"]
     E --> S["SQLite WAL + sqlite-vec KNN + FTS5"]
     S --> Q["MCP stdio / Hardened Axum HTTP / CLI"]
 ```
@@ -171,7 +171,8 @@ contextd completions fish > ~/.config/fish/completions/contextd.fish
 
 | Model | Dimensions | Pooling | Best For |
 |-------|------------|---------|----------|
-| `all-minilm-l6-v2` (default) | 384 | Mean | Fast general-purpose semantic search |
+| `all-minilm-l6-v2` (default) | 384 | Mean | General-purpose FP32 semantic search (~91 MB) |
+| `all-minilm-l6-v2-q8` | 384 | Mean | Quantized int8 (~22 MB) — faster CPU indexing and lower cold query latency |
 | `all-mpnet-base-v2` | 768 | Mean | Higher retrieval accuracy for codebases |
 | `bge-small-en-v1.5` | 384 | CLS | Strong speed/quality balance |
 
@@ -189,23 +190,40 @@ Each model is cached in its own subdirectory under `storage.model_path` and veri
 
 For supported versions, threat boundaries, and private vulnerability reporting, see [`SECURITY.md`](SECURITY.md).
 
-## Benchmarks & Footprint (Measured)
+## Benchmarks & Retrieval Quality (Measured)
 
-End-to-end codebase benchmark measured on Linux x86_64 (AMD Ryzen 5 5600H, 12 logical CPUs) indexing the `contextd` repository itself (`79` files, `1,262` chunks) with `all-minilm-l6-v2` (384-dim local CPU ONNX, `MAX_EMBED_BATCH_SIZE = 16`):
+### Indexing & Query Latency
 
-| Metric | Measured Result |
-| :--- | :---: |
-| **Warm HTTP Hybrid Query (`POST /query`, ONNX embed + `sqlite-vec` KNN + FTS5 RRF)** | **6.44 ms** p50 · **7.74 ms** p95 (min 5.64 ms) |
-| **Cold CLI Query (`contextd query`, loads ONNX model + queries SQLite)** | **190.8 ms** median |
-| **Initial Full-Repo Indexing (79 files / 1,262 chunks, CPU ONNX)** | **65.14 s** (~19.4 chunks/s) |
-| **SQLite Index Size (`contextd.db`)** | **5.0 MB** (9.8 MB incl. active WAL) |
-| **Standalone Binary Size** | **50.8 MB** |
+Measured on Linux x86_64 (AMD Ryzen 5 5600H, 12 logical CPUs) indexing the `contextd` repository itself (`80–83` files, `897–908` chunks after default lockfile exclusion, length-sorted cross-file ONNX batching):
 
-Reproduce on any repository (requires `contextd setup` once for the local ONNX model):
+| Metric | v4.0.2 (`all-minilm-l6-v2`, FP32) | v4.1.0 (`all-minilm-l6-v2`, FP32) | v4.1.0 (`all-minilm-l6-v2-q8`, int8) |
+| :--- | :---: | :---: | :---: |
+| **Initial Full-Repo Indexing** | 65.14 s | **39.22 s** (1.66× faster) | **33.99 s** (1.92× faster) |
+| **Warm HTTP Hybrid Query (`POST /query`)** | 6.44 ms p50 · 7.74 ms p95 | — | **4.84 ms** p50 · **5.69 ms** p95 |
+| **Cold CLI Query (`contextd query`)** | 190.8 ms median | — | **112.9 ms** median (1.69× faster) |
+| **SQLite Index Size (incl. WAL)** | 9.8 MB | — | **6.5 MB** |
+| **Daemon Peak RSS during initial index** | — | — | **988.7 MB** |
+
+### Retrieval Quality Evaluation (36 Queries, Uncontaminated)
+
+Evaluated on the `contextd` repository (`eval/` excluded from the staged copy and `query_hits` reset between modes) across 12 conceptual semantic queries, 12 exact symbol queries, and 12 mixed queries ([`eval/contextd_queries.json`](eval/contextd_queries.json), raw outputs in [`eval/results-fp32.json`](eval/results-fp32.json) and [`eval/results-q8.json`](eval/results-q8.json)):
+
+| Method (`all-minilm-l6-v2-q8`) | Recall@1 | Recall@5 | Recall@10 | MRR | nDCG@10 | Semantic MRR | Exact MRR | Mixed MRR |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| `ripgrep` (`rg`, token-ranked) | **0.722** | **0.889** | 0.917 | **0.793** | **0.817** | **0.506** | 0.958 | **0.917** |
+| `contextd` FTS5 only | 0.556 | 0.861 | 0.972 | 0.685 | 0.752 | 0.341 | **1.000** | 0.715 |
+| `contextd` Vector KNN only | 0.389 | 0.833 | 0.889 | 0.571 | 0.629 | 0.378 | 0.779 | 0.556 |
+| `contextd` Hybrid RRF (`recency=0, freq=0`) | 0.472 | 0.861 | **1.000** | 0.649 | 0.719 | 0.433 | 0.958 | 0.555 |
+| `contextd` Hybrid Default | 0.556 | 0.806 | 0.972 | 0.676 | 0.736 | 0.379 | **1.000** | 0.647 |
+
+**Honest takeaway:** Hybrid RRF beats both `ripgrep` and vector-only search on `Recall@10` (**0.972–1.000** vs 0.917) and ties FTS5 at **1.000 Exact MRR**, while `all-minilm-l6-v2-q8` matches FP32 within 0.005 MRR (`0.676` vs `0.681`) at nearly half the indexing wall time. `ripgrep` still leads on `Recall@1` and `MRR` when `README.md`, `CHANGELOG.md`, and `docs/` are indexed alongside `src/` because general-text MiniLM scores prose documentation higher than Rust source chunks. Pass `--paths src/` or `--file-types rs` when querying code-only contexts.
+
+Reproduce both benchmarks and retrieval evaluations on any repository (requires `contextd setup` once for the selected ONNX model):
 
 ```bash
 cargo build --release --locked
-python3 scripts/bench_repo.py --target .
+python3 scripts/bench_repo.py --target . --model all-minilm-l6-v2-q8
+python3 scripts/eval_retrieval.py --model all-minilm-l6-v2-q8
 ```
 
 For Criterion micro-benchmarks covering AST/text chunking and SQLite WAL (`sqlite-vec` + FTS5) indexing and retrieval:

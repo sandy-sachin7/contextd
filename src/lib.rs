@@ -11,7 +11,7 @@
 //!
 //! - [`config`] — TOML configuration, untrusted workspace isolation, and `CONTEXTD_*` overrides.
 //! - [`indexer`] — Tree-sitter/text chunking, batched ONNX embeddings, `O_NOFOLLOW` safe reads,
-//!   ignore/secret filters, sandboxed external plugins, and file watching.
+//!   ignore/secret filters, timeout- and output-capped external parser plugins, and file watching.
 //! - [`storage`] — Concurrent SQLite WAL storage (`sqlite-vec` KNN + `FTS5` + normalized RRF).
 //! - [`daemon`] — Concurrent indexing orchestrator, per-path coalescing, and reconciliation.
 //! - [`api`] — Hardened Axum HTTP server (`/health`, `/status`, `/query`).

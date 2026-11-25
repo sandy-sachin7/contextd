@@ -57,7 +57,25 @@ pub fn is_default_secret_file(path: &Path) -> bool {
     false
 }
 
-/// Returns true if the path passes through any default-ignored directory or is a secret file.
+fn is_default_lockfile(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "cargo.lock"
+            | "package-lock.json"
+            | "yarn.lock"
+            | "pnpm-lock.yaml"
+            | "uv.lock"
+            | "poetry.lock"
+            | "composer.lock"
+            | "gemfile.lock"
+            | "go.sum"
+    )
+}
+
+/// Returns true if the path passes through any default-ignored directory or is a secret/lock file.
 pub fn is_default_excluded(path: &Path, is_dir: bool) -> bool {
     for comp in path.components() {
         if let Component::Normal(os_str) = comp {
@@ -68,7 +86,7 @@ pub fn is_default_excluded(path: &Path, is_dir: bool) -> bool {
             }
         }
     }
-    !is_dir && is_default_secret_file(path)
+    !is_dir && (is_default_secret_file(path) || is_default_lockfile(path))
 }
 
 pub struct IgnoreChecker {

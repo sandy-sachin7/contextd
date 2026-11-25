@@ -5,6 +5,23 @@ All notable changes to `contextd` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0] - 2026-11-25
+
+### Added
+- **Quantized int8 Embedding Model (`all-minilm-l6-v2-q8`)**: Added SHA-256 pinned int8 quantized `all-MiniLM-L6-v2` (~22 MB vs 91 MB FP32) for faster local CPU indexing and lower cold-query latency (`33.99s` initial repo index, `4.84 ms` p50 warm HTTP query, `112.9 ms` cold CLI query).
+- **Retrieval Quality Evaluation Suite (`eval/contextd_queries.json`, `scripts/eval_retrieval.py`)**: 36-query ground-truth benchmark comparing `ripgrep`, SQLite FTS5-only, Vector KNN-only, raw Hybrid RRF, and default Hybrid RRF across `Recall@1/5/10`, `MRR`, and `nDCG@10` with checked-in raw outputs (`eval/results-fp32.json`, `eval/results-q8.json`).
+- **Explicit Search Modes & JSON Output**: Extracted `Database::search_chunks_fts`, added optional `mode` (`hybrid` | `vector` | `fts`), `recency_weight`, and `frequency_weight` parameters to `POST /query`, and added `--mode` and `--json` flags to `contextd query`.
+- **MCP `2025-11-25` Support**: Added protocol version `2025-11-25` alongside `2025-06-18`, `2025-03-26`, and `2024-11-05`.
+
+### Changed
+- **Length-Sorted Cross-File ONNX Batching**: `Embedder::embed_batch` now sorts chunks by length before slicing into micro-batches to minimize attention padding waste, and initial daemon scans batch chunks across files (128-chunk windows) with up to 8 ONNX intra-op threads.
+- **Default Lockfile Exclusions**: Added common dependency lockfiles (`Cargo.lock`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `uv.lock`, `poetry.lock`, `composer.lock`, `Gemfile.lock`, `go.sum`) to default exclusions to prevent noisy chunks and wasted embedding compute.
+- **FTS5 Stopword Filtering & Hybrid RRF Balance**: Stripped common English stopwords in `build_fts5_query` when non-stopword terms remain and rebalanced hybrid RRF fusion (`0.85 * norm_rrf + 0.15 * vsim`) so prose cosine scores do not override strong FTS5 + vector rank agreement.
+
+### Fixed
+- **Preserve Last Known Good Index on Transient Failures**: `daemon.rs` no longer prunes previously indexed chunks when a parser snapshot, external plugin, chunker, embedder, or SQLite commit fails; stale rows are still pruned when files are deleted, become binary/invalid UTF-8, or exceed `max_file_size`.
+- **Accurate Plugin Isolation Documentation**: Replaced "sandboxed" wording with "timeout- and output-capped external parser subprocesses" across README and crate/book docs to reflect that plugins run as trusted subprocesses without OS-level sandboxing.
+
 ## [4.0.2] - 2026-11-25
 
 ### Fixed

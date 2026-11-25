@@ -43,6 +43,12 @@ pub const SUPPORTED_MODELS: &[ModelSpec] = &[
         pooling: PoolingStrategy::Mean,
     },
     ModelSpec {
+        id: "all-minilm-l6-v2-q8",
+        expected_dim: 384,
+        max_seq_len: 512,
+        pooling: PoolingStrategy::Mean,
+    },
+    ModelSpec {
         id: "all-mpnet-base-v2",
         expected_dim: 768,
         max_seq_len: 384,
@@ -142,7 +148,7 @@ impl Embedder {
         }));
 
         let intra_threads = std::thread::available_parallelism()
-            .map(|n| n.get().min(4))
+            .map(|n| n.get().min(8))
             .unwrap_or(2);
 
         ort_environment()?;
@@ -198,11 +204,25 @@ impl Embedder {
             return self.embed_micro_batch(texts);
         }
 
-        let mut all_embeddings = Vec::with_capacity(texts.len());
-        for chunk in texts.chunks(MAX_EMBED_BATCH_SIZE) {
-            all_embeddings.extend(self.embed_micro_batch(chunk)?);
+        // Sort indices by byte length so micro-batches group similar-length chunks and avoid
+        // quadratic self-attention padding waste when short and long chunks share a batch.
+        let mut order: Vec<usize> = (0..texts.len()).collect();
+        order.sort_by_key(|&i| texts[i].len());
+
+        let mut results: Vec<Vec<f32>> = vec![Vec::new(); texts.len()];
+        let mut batch_texts: Vec<&str> = Vec::with_capacity(MAX_EMBED_BATCH_SIZE);
+
+        for idx_chunk in order.chunks(MAX_EMBED_BATCH_SIZE) {
+            batch_texts.clear();
+            for &idx in idx_chunk {
+                batch_texts.push(texts[idx]);
+            }
+            let batch_embs = self.embed_micro_batch(&batch_texts)?;
+            for (&orig_idx, emb) in idx_chunk.iter().zip(batch_embs) {
+                results[orig_idx] = emb;
+            }
         }
-        Ok(all_embeddings)
+        Ok(results)
     }
 
     fn embed_micro_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {

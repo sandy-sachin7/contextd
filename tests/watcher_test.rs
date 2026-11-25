@@ -625,7 +625,7 @@ async fn test_changed_unindexable_file_prunes_old_chunks() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn test_parser_failure_prunes_stale_chunks() {
+async fn test_parser_failure_preserves_last_known_good_index() {
     let temp_dir = TempDir::new().unwrap();
     let watch_dir = temp_dir.path().join("watched");
     fs::create_dir(&watch_dir).unwrap();
@@ -655,18 +655,40 @@ async fn test_parser_failure_prunes_stale_chunks() {
         .await
     );
 
+    // Trigger a transient parser failure: last known good chunks must survive.
     fs::write(&file_path, "reject parser content").unwrap();
-    let cleared = wait_until(Duration::from_secs(6), || {
-        db.list_indexed_paths()
-            .map(|paths| !paths.contains(&path_key))
-            .unwrap_or(false)
+    sleep(Duration::from_millis(800)).await;
+
+    let still_indexed = db
+        .list_indexed_paths()
+        .map(|paths| paths.contains(&path_key))
+        .unwrap_or(false);
+    let healthy_hits = db
+        .search_chunks_fts("healthy", &contextd::storage::db::SearchOptions::default())
+        .unwrap();
+    assert!(
+        still_indexed,
+        "Parser failure dropped last known good index"
+    );
+    assert_eq!(healthy_hits.len(), 1);
+
+    // Once valid content returns, re-indexing replaces the preserved version cleanly.
+    fs::write(&file_path, "recovered parser content").unwrap();
+    let recovered = wait_until(Duration::from_secs(6), || {
+        db.search_chunks_fts(
+            "recovered",
+            &contextd::storage::db::SearchOptions::default(),
+        )
+        .map(|hits| !hits.is_empty())
+        .unwrap_or(false)
     })
     .await;
-    let stats = db.get_stats().unwrap();
     handle.abort();
 
-    assert!(cleared, "Parser failure left stale chunks indexed");
-    assert_eq!(stats.chunk_count, 0);
+    assert!(
+        recovered,
+        "Index failed to recover after transient parser failure"
+    );
 }
 
 #[cfg(unix)]
