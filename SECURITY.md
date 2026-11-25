@@ -4,9 +4,20 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 4.x     | :white_check_mark: |
+| 4.0.2+  | :white_check_mark: |
+| 4.0.1   | :x: (Deprecated; use 4.0.2) |
 | 3.x     | :x: (End of Life)  |
 | < 3.0   | :x: (End of Life)  |
+
+## Accepted Dependency Advisories
+
+The following transitive, unmaintained advisories are accepted for 4.0.2. The repository owner approved this exception on 2026-11-25. Review it again when an upstream patch lands or at the next minor release.
+
+| Advisory | Dependency path | Reason |
+| -------- | --------------- | ------ |
+| RUSTSEC-2025-0119 | `number_prefix` via `indicatif 0.17` | No upstream patch is available; exposure is limited to progress-bar rendering. |
+| RUSTSEC-2024-0436 | `paste` via `tokenizers 0.21` | Crate is archived with no patch; exposure is build-time macro expansion. |
+| RUSTSEC-2026-0192 | `ttf-parser` via `lopdf` through `pdf-extract 0.12` | No upstream patch is available; PDF parsing runs only on explicitly indexed PDFs. |
 
 ## Reporting a Vulnerability
 

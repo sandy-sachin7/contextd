@@ -1,9 +1,12 @@
 [advisories]
 ignore = [
+    # Owner-approved 2026-11-25; see SECURITY.md#accepted-dependency-advisories.
     # Transitive via indicatif 0.17; the maintainer has not published a patch.
     "RUSTSEC-2025-0119",
+    # Owner-approved 2026-11-25; see SECURITY.md#accepted-dependency-advisories.
     # Transitive via tokenizers 0.21; the crate is archived with no patch.
     "RUSTSEC-2024-0436",
+    # Owner-approved 2026-11-25; see SECURITY.md#accepted-dependency-advisories.
     # Transitive via lopdf through pdf-extract 0.12; no patch is available.
     "RUSTSEC-2026-0192",
 ]

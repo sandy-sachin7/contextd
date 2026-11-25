@@ -25,7 +25,7 @@ A clear and concise description of what you expected to happen.
 ## Environment
 
 - OS: [e.g. Ubuntu 24.04, macOS 15.2]
-- contextd version: [e.g. 4.0.1]
+- contextd version: [e.g. 4.0.2]
 - Installation method: [binary release / cargo / homebrew / docker / built from source]
 - Embedding model: [e.g. all-minilm-l6-v2]
 

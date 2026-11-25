@@ -2,7 +2,7 @@
 
 ## Project Context
 
-`contextd` (v4.0.1) is a local-first, privacy-preserving semantic context daemon and Rust library for AI agents. It watches local files, chunks them with Tree-sitter/Markdown/PDF/sandboxed plugins, embeds them via batched ONNX Runtime, stores them in SQLite WAL (`sqlite-vec` KNN + `FTS5`), and serves hybrid search over MCP stdio, hardened Axum HTTP, and CLI.
+`contextd` (v4.0.2) is a local-first, privacy-preserving semantic context daemon and Rust library for AI agents. It watches local files, chunks them with Tree-sitter/Markdown/PDF/sandboxed plugins, embeds them via batched ONNX Runtime, stores them in SQLite WAL (`sqlite-vec` KNN + `FTS5`), and serves hybrid search over MCP stdio, hardened Axum HTTP, and CLI.
 
 ## Repository
 
@@ -23,7 +23,7 @@ bash -n scripts/install.sh scripts/playground.sh scripts/pdftotext.sh
 
 ## Architecture & Security Invariants
 
-- **MSRV**: Rust `1.91+`, edition 2021 (`rust-toolchain.toml` tracks `stable`).
+- **MSRV**: Rust `1.95+`, edition 2021 (`rust-toolchain.toml` tracks `stable`).
 - **Storage**: Schema v2 SQLite WAL (`src/storage/db.rs`) with single writer + 8-connection read-only `r2d2` reader pool, `sqlite-vec` KNN, and Porter-stemmed `FTS5` (no in-memory LRU cache).
 - **Concurrency & Watching**: `available_parallelism().clamp(2, 8)` workers, `500ms` default debounce, `PathCoordinator` per-path coalescing, `blake3` fast-skipping.
 - **Trust Boundaries**: Workspace `./contextd.toml` (and untrusted `--config` without `--trust-config`) can only set `[watch]` and `[chunking]`; `[plugins]` requires explicit trust (`--trust-workspace-plugins`, `--trust-config`, or user-global `security.allow_workspace_plugins = true`).
