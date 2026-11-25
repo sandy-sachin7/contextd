@@ -16,6 +16,10 @@
 
 <hr/>
 
+<p align="center">
+  <img src="./assets/contextd-poster.png" alt="contextd v4.0.2 benchmark poster showing 6.44 ms p50 hybrid query latency and 47.6% peak RSS reduction via 16-chunk ONNX micro-batching" width="100%" />
+</p>
+
 ## Why contextd?
 
 - **100% Local & Private** — Embeddings, vector KNN, and full-text indexing run locally on your machine. Source code never leaves disk.
