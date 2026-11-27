@@ -5,6 +5,12 @@ All notable changes to `contextd` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.0] - 2026-11-28
+
+### Added
+- **Independent External Multi-Language Retrieval Evaluation (`eval/external_repos.json`, `scripts/eval_external.py`)**: Added 54 uncontaminated queries across three third-party repositories pinned to immutable commit SHAs spanning Rust (`sharkdp/fd`), Python (`encode/httpx`), and TypeScript (`pmndrs/zustand`), with checked-in raw Q8 reports (`eval/results-external-{fd,httpx,zustand,summary}-q8.json`). Without tuning on external queries, `hybrid_default` (`all-minilm-l6-v2-q8`) achieves `0.823` weighted MRR / `0.860` nDCG@10 / `1.000` Recall@5 across all 54 queries (vs `0.443` / `0.512` for `ripgrep`, `0.614` / `0.691` for `fts_only`, and `0.605` / `0.683` for `vector_only`).
+- **Automated Retrieval Quality Regression Gates (`scripts/eval_retrieval.py`, `.github/workflows/ci.yml`, `.github/workflows/external-eval.yml`)**: Added `--auto-setup`, `--min-mrr`, `--min-ndcg`, `--min-semantic-mrr`, and `--require-beat-ripgrep` flags to `scripts/eval_retrieval.py`, wired a mandatory `Retrieval Quality Gate (Q8)` job into `ci.yml` on every push and PR, and added a scheduled/manual `External Retrieval Evaluation` workflow.
+
 ## [4.2.0] - 2026-11-25
 
 ### Changed

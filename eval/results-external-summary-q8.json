@@ -1,0 +1,103 @@
+{
+  "model": "all-minilm-l6-v2-q8",
+  "total_queries": 54,
+  "repositories": [
+    {
+      "name": "fd",
+      "language": "Rust",
+      "url": "https://github.com/sharkdp/fd.git",
+      "commit": "2e8648f10fe55af6258ab90ab889eb8b96033379",
+      "license": "MIT / Apache-2.0",
+      "query_count": 18,
+      "indexed_files": 49,
+      "total_chunks": 1124,
+      "index_wall_s": 30.96,
+      "ripgrep_mrr": 0.5467,
+      "ripgrep_ndcg10": 0.6238,
+      "hybrid_default_mrr": 0.7954,
+      "hybrid_default_ndcg10": 0.8232
+    },
+    {
+      "name": "httpx",
+      "language": "Python",
+      "url": "https://github.com/encode/httpx.git",
+      "commit": "e347fb5e93b91f7cf63a575f595f33db8d90fe20",
+      "license": "BSD-3-Clause",
+      "query_count": 18,
+      "indexed_files": 103,
+      "total_chunks": 1579,
+      "index_wall_s": 53.26,
+      "ripgrep_mrr": 0.4843,
+      "ripgrep_ndcg10": 0.5531,
+      "hybrid_default_mrr": 0.8213,
+      "hybrid_default_ndcg10": 0.8655
+    },
+    {
+      "name": "zustand",
+      "language": "TypeScript",
+      "url": "https://github.com/pmndrs/zustand.git",
+      "commit": "5d66d53be80363b94491868b41325ea058fd16bb",
+      "license": "MIT",
+      "query_count": 18,
+      "indexed_files": 114,
+      "total_chunks": 1050,
+      "index_wall_s": 31.83,
+      "ripgrep_mrr": 0.2982,
+      "ripgrep_ndcg10": 0.359,
+      "hybrid_default_mrr": 0.8519,
+      "hybrid_default_ndcg10": 0.8902
+    }
+  ],
+  "weighted_methods": {
+    "ripgrep": {
+      "overall": {
+        "recall@1": 0.3148,
+        "recall@5": 0.5741,
+        "recall@10": 0.7408,
+        "mrr": 0.4431,
+        "ndcg@10": 0.512
+      },
+      "semantic_mrr": 0.2291
+    },
+    "fts_only": {
+      "overall": {
+        "recall@1": 0.4444,
+        "recall@5": 0.8889,
+        "recall@10": 0.963,
+        "mrr": 0.6144,
+        "ndcg@10": 0.691
+      },
+      "semantic_mrr": 0.434
+    },
+    "vector_only": {
+      "overall": {
+        "recall@1": 0.3704,
+        "recall@5": 0.9259,
+        "recall@10": 0.9629,
+        "mrr": 0.6052,
+        "ndcg@10": 0.6828
+      },
+      "semantic_mrr": 0.4472
+    },
+    "hybrid_rrf": {
+      "overall": {
+        "recall@1": 0.7222,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.8229,
+        "ndcg@10": 0.8596
+      },
+      "semantic_mrr": 0.6491
+    },
+    "hybrid_default": {
+      "overall": {
+        "recall@1": 0.7222,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.8229,
+        "ndcg@10": 0.8596
+      },
+      "semantic_mrr": 0.6491
+    }
+  }
+}

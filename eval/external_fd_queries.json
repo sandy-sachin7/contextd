@@ -1,0 +1,110 @@
+[
+  {
+    "id": "fd-sem-1",
+    "category": "semantic",
+    "query": "parallel directory traversal and worker thread walking",
+    "expected_files": ["src/walk.rs"]
+  },
+  {
+    "id": "fd-sem-2",
+    "category": "semantic",
+    "query": "filter files by modification timestamp newer or older than duration",
+    "expected_files": ["src/filter/time.rs"]
+  },
+  {
+    "id": "fd-sem-3",
+    "category": "semantic",
+    "query": "filter search results by file size bounds and byte units",
+    "expected_files": ["src/filter/size.rs"]
+  },
+  {
+    "id": "fd-sem-4",
+    "category": "semantic",
+    "query": "filter files by unix user and group ownership",
+    "expected_files": ["src/filter/owner.rs"]
+  },
+  {
+    "id": "fd-sem-5",
+    "category": "semantic",
+    "query": "placeholder template parsing for command execution arguments",
+    "expected_files": ["src/fmt/mod.rs", "src/fmt/input.rs"]
+  },
+  {
+    "id": "fd-sem-6",
+    "category": "semantic",
+    "query": "render OSC 8 terminal hyperlinks for matched file paths",
+    "expected_files": ["src/hyperlink.rs", "src/output.rs"]
+  },
+  {
+    "id": "fd-ex-1",
+    "category": "exact",
+    "query": "execute_commands handle_cmd_error OutputBuffer",
+    "expected_files": ["src/exec/command.rs"]
+  },
+  {
+    "id": "fd-ex-2",
+    "category": "exact",
+    "query": "FormatTemplate Token parse placeholder",
+    "expected_files": ["src/fmt/mod.rs"]
+  },
+  {
+    "id": "fd-ex-3",
+    "category": "exact",
+    "query": "build_patterns patterns_match_strings_with_leading_dots",
+    "expected_files": ["src/patterns.rs"]
+  },
+  {
+    "id": "fd-ex-4",
+    "category": "exact",
+    "query": "strip_current_dir path_absolute_form is_existing_directory",
+    "expected_files": ["src/filesystem.rs"]
+  },
+  {
+    "id": "fd-ex-5",
+    "category": "exact",
+    "query": "print_entry DirEntry Config stdout",
+    "expected_files": ["src/output.rs"]
+  },
+  {
+    "id": "fd-ex-6",
+    "category": "exact",
+    "query": "CommandSet ExecutionMode batch job",
+    "expected_files": ["src/exec/mod.rs", "src/exec/job.rs"]
+  },
+  {
+    "id": "fd-mix-1",
+    "category": "mixed",
+    "query": "command line flags Opts FileType ColorWhen clap parsing",
+    "expected_files": ["src/cli.rs"]
+  },
+  {
+    "id": "fd-mix-2",
+    "category": "mixed",
+    "query": "sanitize terminal escape sequences in file paths",
+    "expected_files": ["src/sanitize.rs"]
+  },
+  {
+    "id": "fd-mix-3",
+    "category": "mixed",
+    "query": "check if regex pattern contains uppercase characters for smart case",
+    "expected_files": ["src/regex_helper.rs", "src/patterns.rs"]
+  },
+  {
+    "id": "fd-mix-4",
+    "category": "mixed",
+    "query": "remove file extension basename and dirname helpers",
+    "expected_files": ["src/fmt/input.rs"]
+  },
+  {
+    "id": "fd-mix-5",
+    "category": "mixed",
+    "query": "process exit codes ExitCode signal handling",
+    "expected_files": ["src/exit_codes.rs"]
+  },
+  {
+    "id": "fd-mix-6",
+    "category": "mixed",
+    "query": "FileTypes matching symlinks sockets pipes executables",
+    "expected_files": ["src/filetypes.rs"]
+  }
+]

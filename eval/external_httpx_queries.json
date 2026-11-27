@@ -1,0 +1,110 @@
+[
+  {
+    "id": "httpx-sem-1",
+    "category": "semantic",
+    "query": "HTTP basic digest and netrc request authentication flows",
+    "expected_files": ["httpx/_auth.py"]
+  },
+  {
+    "id": "httpx-sem-2",
+    "category": "semantic",
+    "query": "multipart form data file upload boundary encoding",
+    "expected_files": ["httpx/_multipart.py"]
+  },
+  {
+    "id": "httpx-sem-3",
+    "category": "semantic",
+    "query": "response body decompression gzip deflate brotli zstd",
+    "expected_files": ["httpx/_decoders.py"]
+  },
+  {
+    "id": "httpx-sem-4",
+    "category": "semantic",
+    "query": "parse and normalize URL scheme host port query string",
+    "expected_files": ["httpx/_urlparse.py", "httpx/_urls.py"]
+  },
+  {
+    "id": "httpx-sem-5",
+    "category": "semantic",
+    "query": "connection pool limits proxy configuration and SSL context",
+    "expected_files": ["httpx/_config.py"]
+  },
+  {
+    "id": "httpx-sem-6",
+    "category": "semantic",
+    "query": "test ASGI web applications in memory without network sockets",
+    "expected_files": ["httpx/_transports/asgi.py"]
+  },
+  {
+    "id": "httpx-ex-1",
+    "category": "exact",
+    "query": "DigestAuth BasicAuth NetRCAuth FunctionAuth",
+    "expected_files": ["httpx/_auth.py"]
+  },
+  {
+    "id": "httpx-ex-2",
+    "category": "exact",
+    "query": "MultipartStream DataField FileField get_multipart_boundary_from_content_type",
+    "expected_files": ["httpx/_multipart.py"]
+  },
+  {
+    "id": "httpx-ex-3",
+    "category": "exact",
+    "query": "AsyncClient BaseClient _is_https_redirect _same_origin",
+    "expected_files": ["httpx/_client.py"]
+  },
+  {
+    "id": "httpx-ex-4",
+    "category": "exact",
+    "query": "create_ssl_context Timeout Limits Proxy",
+    "expected_files": ["httpx/_config.py"]
+  },
+  {
+    "id": "httpx-ex-5",
+    "category": "exact",
+    "query": "ASGITransport ASGIResponseStream is_running_trio",
+    "expected_files": ["httpx/_transports/asgi.py"]
+  },
+  {
+    "id": "httpx-ex-6",
+    "category": "exact",
+    "query": "TooManyRedirects HTTPStatusError ConnectTimeout ReadTimeout",
+    "expected_files": ["httpx/_exceptions.py"]
+  },
+  {
+    "id": "httpx-mix-1",
+    "category": "mixed",
+    "query": "WSGI transport synchronous Python web app adapter",
+    "expected_files": ["httpx/_transports/wsgi.py"]
+  },
+  {
+    "id": "httpx-mix-2",
+    "category": "mixed",
+    "query": "MockTransport custom handler function for unit tests",
+    "expected_files": ["httpx/_transports/mock.py"]
+  },
+  {
+    "id": "httpx-mix-3",
+    "category": "mixed",
+    "query": "HTTP status code enum constants and reason phrases",
+    "expected_files": ["httpx/_status_codes.py"]
+  },
+  {
+    "id": "httpx-mix-4",
+    "category": "mixed",
+    "query": "top level convenience functions get post put patch delete stream",
+    "expected_files": ["httpx/_api.py"]
+  },
+  {
+    "id": "httpx-mix-5",
+    "category": "mixed",
+    "query": "Request Response Headers Cookies model classes",
+    "expected_files": ["httpx/_models.py"]
+  },
+  {
+    "id": "httpx-mix-6",
+    "category": "mixed",
+    "query": "encode request body bytes iterator json form content stream",
+    "expected_files": ["httpx/_content.py"]
+  }
+]

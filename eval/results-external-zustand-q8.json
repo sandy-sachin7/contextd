@@ -1,0 +1,175 @@
+{
+  "model": "all-minilm-l6-v2-q8",
+  "query_count": 18,
+  "indexed_files": 114,
+  "total_chunks": 1050,
+  "index_wall_s": 31.83,
+  "chunks_per_sec": 33.0,
+  "methods": {
+    "ripgrep": {
+      "overall": {
+        "recall@1": 0.1667,
+        "recall@5": 0.3889,
+        "recall@10": 0.5556,
+        "mrr": 0.2982,
+        "ndcg@10": 0.359
+      },
+      "by_category": {
+        "semantic": {
+          "recall@1": 0.0,
+          "recall@5": 0.3333,
+          "recall@10": 0.6667,
+          "mrr": 0.2071,
+          "ndcg@10": 0.314
+        },
+        "exact": {
+          "recall@1": 0.5,
+          "recall@5": 0.6667,
+          "recall@10": 0.6667,
+          "mrr": 0.5833,
+          "ndcg@10": 0.6052
+        },
+        "mixed": {
+          "recall@1": 0.0,
+          "recall@5": 0.1667,
+          "recall@10": 0.3333,
+          "mrr": 0.1042,
+          "ndcg@10": 0.1577
+        }
+      }
+    },
+    "fts_only": {
+      "overall": {
+        "recall@1": 0.2778,
+        "recall@5": 0.8889,
+        "recall@10": 1.0,
+        "mrr": 0.5426,
+        "ndcg@10": 0.6551
+      },
+      "by_category": {
+        "semantic": {
+          "recall@1": 0.1667,
+          "recall@5": 0.8333,
+          "recall@10": 1.0,
+          "mrr": 0.4472,
+          "ndcg@10": 0.5803
+        },
+        "exact": {
+          "recall@1": 0.3333,
+          "recall@5": 0.8333,
+          "recall@10": 1.0,
+          "mrr": 0.5694,
+          "ndcg@10": 0.6748
+        },
+        "mixed": {
+          "recall@1": 0.3333,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.6111,
+          "ndcg@10": 0.7103
+        }
+      }
+    },
+    "vector_only": {
+      "overall": {
+        "recall@1": 0.1667,
+        "recall@5": 0.8889,
+        "recall@10": 0.9444,
+        "mrr": 0.4519,
+        "ndcg@10": 0.5739
+      },
+      "by_category": {
+        "semantic": {
+          "recall@1": 0.0,
+          "recall@5": 0.8333,
+          "recall@10": 1.0,
+          "mrr": 0.3278,
+          "ndcg@10": 0.4896
+        },
+        "exact": {
+          "recall@1": 0.0,
+          "recall@5": 0.8333,
+          "recall@10": 0.8333,
+          "mrr": 0.3611,
+          "ndcg@10": 0.4821
+        },
+        "mixed": {
+          "recall@1": 0.5,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.6667,
+          "ndcg@10": 0.75
+        }
+      }
+    },
+    "hybrid_rrf": {
+      "overall": {
+        "recall@1": 0.7222,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.8519,
+        "ndcg@10": 0.8902
+      },
+      "by_category": {
+        "semantic": {
+          "recall@1": 0.8333,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.8889,
+          "ndcg@10": 0.9167
+        },
+        "exact": {
+          "recall@1": 0.5,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.75,
+          "ndcg@10": 0.8155
+        },
+        "mixed": {
+          "recall@1": 0.8333,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.9167,
+          "ndcg@10": 0.9385
+        }
+      }
+    },
+    "hybrid_default": {
+      "overall": {
+        "recall@1": 0.7222,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.8519,
+        "ndcg@10": 0.8902
+      },
+      "by_category": {
+        "semantic": {
+          "recall@1": 0.8333,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.8889,
+          "ndcg@10": 0.9167
+        },
+        "exact": {
+          "recall@1": 0.5,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.75,
+          "ndcg@10": 0.8155
+        },
+        "mixed": {
+          "recall@1": 0.8333,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.9167,
+          "ndcg@10": 0.9385
+        }
+      }
+    }
+  },
+  "repo": "zustand",
+  "language": "TypeScript",
+  "url": "https://github.com/pmndrs/zustand.git",
+  "commit": "5d66d53be80363b94491868b41325ea058fd16bb",
+  "license": "MIT"
+}

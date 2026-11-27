@@ -1,0 +1,26 @@
+[
+  {
+    "name": "fd",
+    "language": "Rust",
+    "license": "MIT / Apache-2.0",
+    "url": "https://github.com/sharkdp/fd.git",
+    "commit": "2e8648f10fe55af6258ab90ab889eb8b96033379",
+    "queries": "eval/external_fd_queries.json"
+  },
+  {
+    "name": "httpx",
+    "language": "Python",
+    "license": "BSD-3-Clause",
+    "url": "https://github.com/encode/httpx.git",
+    "commit": "e347fb5e93b91f7cf63a575f595f33db8d90fe20",
+    "queries": "eval/external_httpx_queries.json"
+  },
+  {
+    "name": "zustand",
+    "language": "TypeScript",
+    "license": "MIT",
+    "url": "https://github.com/pmndrs/zustand.git",
+    "commit": "5d66d53be80363b94491868b41325ea058fd16bb",
+    "queries": "eval/external_zustand_queries.json"
+  }
+]

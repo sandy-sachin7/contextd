@@ -82,3 +82,40 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  retrieval-regression:
+    name: Retrieval Quality Gate (Q8)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache Q8 ONNX model
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/contextd/models
+          key: contextd-model-all-minilm-l6-v2-q8-v1
+
+      - name: Ensure ripgrep is installed
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y ripgrep
+          fi
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Run retrieval regression gate
+        run: |
+          python3 scripts/eval_retrieval.py \
+            --model all-minilm-l6-v2-q8 \
+            --auto-setup \
+            --min-mrr 0.80 \
+            --min-ndcg 0.82 \
+            --min-semantic-mrr 0.60 \
+            --require-beat-ripgrep

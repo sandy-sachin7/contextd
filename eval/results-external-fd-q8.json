@@ -1,0 +1,175 @@
+{
+  "model": "all-minilm-l6-v2-q8",
+  "query_count": 18,
+  "indexed_files": 49,
+  "total_chunks": 1124,
+  "index_wall_s": 30.96,
+  "chunks_per_sec": 36.3,
+  "methods": {
+    "ripgrep": {
+      "overall": {
+        "recall@1": 0.3889,
+        "recall@5": 0.6667,
+        "recall@10": 0.8889,
+        "mrr": 0.5467,
+        "ndcg@10": 0.6238
+      },
+      "by_category": {
+        "semantic": {
+          "recall@1": 0.0,
+          "recall@5": 0.1667,
+          "recall@10": 0.6667,
+          "mrr": 0.1442,
+          "ndcg@10": 0.2396
+        },
+        "exact": {
+          "recall@1": 0.5,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.75,
+          "ndcg@10": 0.8155
+        },
+        "mixed": {
+          "recall@1": 0.6667,
+          "recall@5": 0.8333,
+          "recall@10": 1.0,
+          "mrr": 0.746,
+          "ndcg@10": 0.8163
+        }
+      }
+    },
+    "fts_only": {
+      "overall": {
+        "recall@1": 0.6111,
+        "recall@5": 0.8889,
+        "recall@10": 1.0,
+        "mrr": 0.7182,
+        "ndcg@10": 0.7654
+      },
+      "by_category": {
+        "semantic": {
+          "recall@1": 0.1667,
+          "recall@5": 0.6667,
+          "recall@10": 1.0,
+          "mrr": 0.363,
+          "ndcg@10": 0.4774
+        },
+        "exact": {
+          "recall@1": 0.8333,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.9167,
+          "ndcg@10": 0.9385
+        },
+        "mixed": {
+          "recall@1": 0.8333,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.875,
+          "ndcg@10": 0.8802
+        }
+      }
+    },
+    "vector_only": {
+      "overall": {
+        "recall@1": 0.6111,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.7657,
+        "ndcg@10": 0.7974
+      },
+      "by_category": {
+        "semantic": {
+          "recall@1": 0.1667,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.5417,
+          "ndcg@10": 0.5777
+        },
+        "exact": {
+          "recall@1": 1.0,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 1.0,
+          "ndcg@10": 1.0
+        },
+        "mixed": {
+          "recall@1": 0.6667,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.7556,
+          "ndcg@10": 0.8145
+        }
+      }
+    },
+    "hybrid_rrf": {
+      "overall": {
+        "recall@1": 0.7222,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.7954,
+        "ndcg@10": 0.8232
+      },
+      "by_category": {
+        "semantic": {
+          "recall@1": 0.1667,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.3861,
+          "ndcg@10": 0.4696
+        },
+        "exact": {
+          "recall@1": 1.0,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 1.0,
+          "ndcg@10": 1.0
+        },
+        "mixed": {
+          "recall@1": 1.0,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 1.0,
+          "ndcg@10": 1.0
+        }
+      }
+    },
+    "hybrid_default": {
+      "overall": {
+        "recall@1": 0.7222,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 0.7954,
+        "ndcg@10": 0.8232
+      },
+      "by_category": {
+        "semantic": {
+          "recall@1": 0.1667,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 0.3861,
+          "ndcg@10": 0.4696
+        },
+        "exact": {
+          "recall@1": 1.0,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 1.0,
+          "ndcg@10": 1.0
+        },
+        "mixed": {
+          "recall@1": 1.0,
+          "recall@5": 1.0,
+          "recall@10": 1.0,
+          "mrr": 1.0,
+          "ndcg@10": 1.0
+        }
+      }
+    }
+  },
+  "repo": "fd",
+  "language": "Rust",
+  "url": "https://github.com/sharkdp/fd.git",
+  "commit": "2e8648f10fe55af6258ab90ab889eb8b96033379",
+  "license": "MIT / Apache-2.0"
+}

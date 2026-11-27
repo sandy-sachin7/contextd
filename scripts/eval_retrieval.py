@@ -57,17 +57,62 @@ def find_contextd_bin() -> str:
     raise FileNotFoundError("contextd binary not found. Run `cargo build --release --locked` first.")
 
 
+def default_model_root() -> Path:
+    env_path = os.environ.get("CONTEXTD_MODEL_PATH", "").strip()
+    if env_path:
+        return Path(env_path).expanduser()
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "contextd" / "models"
+    xdg_data = os.environ.get("XDG_DATA_HOME", "").strip()
+    if xdg_data:
+        return Path(xdg_data).expanduser() / "contextd" / "models"
+    return Path.home() / ".local" / "share" / "contextd" / "models"
+
+
 def find_model_dir(model_type: str) -> Path:
-    candidates = [
+    candidates: list[Path] = []
+    env_path = os.environ.get("CONTEXTD_MODEL_PATH", "").strip()
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+    xdg_data = os.environ.get("XDG_DATA_HOME", "").strip()
+    if xdg_data:
+        candidates.append(Path(xdg_data).expanduser() / "contextd" / "models")
+    candidates.extend([
         Path.home() / ".local" / "share" / "contextd" / "models",
         Path.home() / "Library" / "Application Support" / "contextd" / "models",
-    ]
+    ])
     for c in candidates:
-        if (c / model_type / "model.onnx").exists():
+        model_sub = c / model_type
+        if (model_sub / "model.onnx").exists() and (model_sub / "tokenizer.json").exists():
             return c
     raise FileNotFoundError(
-        f"Cached model '{model_type}' not found. Run `contextd setup` with model_type='{model_type}' first."
+        f"Cached model '{model_type}' not found. Run `contextd setup` with model_type='{model_type}' first, or pass --auto-setup."
     )
+
+
+def ensure_model_dir(bin_path: str, model_type: str, auto_setup: bool) -> Path:
+    try:
+        return find_model_dir(model_type)
+    except FileNotFoundError:
+        if not auto_setup:
+            raise
+    target_root = default_model_root()
+    target_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="contextd-setup-") as tmp:
+        setup_cfg = Path(tmp) / "setup.toml"
+        setup_cfg.write_text(
+            f"""[storage]
+model_path = {json.dumps(str(target_root))}
+model_type = {json.dumps(model_type)}
+""",
+            encoding="utf-8",
+        )
+        print(f"Bootstrapping model '{model_type}' into {target_root} via `contextd setup`...")
+        subprocess.run(
+            [bin_path, "--config", str(setup_cfg), "--trust-config", "setup"],
+            check=True,
+        )
+    return find_model_dir(model_type)
 
 
 def find_free_port() -> int:
@@ -168,17 +213,65 @@ def aggregate(rows: list[dict[str, float]]) -> dict[str, float]:
     return {k: round(sum(r[k] for r in rows) / n, 4) for k in keys}
 
 
+def evaluate_gates(
+    summary: dict[str, dict],
+    min_mrr: float | None = None,
+    min_ndcg: float | None = None,
+    min_semantic_mrr: float | None = None,
+    require_beat_ripgrep: bool = False,
+) -> list[str]:
+    failures: list[str] = []
+    hybrid = summary["hybrid_default"]
+    hybrid_overall = hybrid["overall"]
+    hybrid_sem = hybrid["by_category"].get("semantic", {})
+
+    if min_mrr is not None and hybrid_overall["mrr"] < min_mrr:
+        failures.append(
+            f"hybrid_default.overall.mrr={hybrid_overall['mrr']:.4f} < --min-mrr {min_mrr:.4f}"
+        )
+    if min_ndcg is not None and hybrid_overall["ndcg@10"] < min_ndcg:
+        failures.append(
+            f"hybrid_default.overall.ndcg@10={hybrid_overall['ndcg@10']:.4f} < --min-ndcg {min_ndcg:.4f}"
+        )
+    if min_semantic_mrr is not None:
+        sem_mrr = hybrid_sem.get("mrr", 0.0)
+        if sem_mrr < min_semantic_mrr:
+            failures.append(
+                f"hybrid_default.by_category.semantic.mrr={sem_mrr:.4f} < --min-semantic-mrr {min_semantic_mrr:.4f}"
+            )
+    if require_beat_ripgrep:
+        rg_overall = summary["ripgrep"]["overall"]
+        if hybrid_overall["mrr"] <= rg_overall["mrr"]:
+            failures.append(
+                f"hybrid_default.overall.mrr={hybrid_overall['mrr']:.4f} <= ripgrep.overall.mrr={rg_overall['mrr']:.4f}"
+            )
+        if hybrid_overall["ndcg@10"] <= rg_overall["ndcg@10"]:
+            failures.append(
+                f"hybrid_default.overall.ndcg@10={hybrid_overall['ndcg@10']:.4f} <= ripgrep.overall.ndcg@10={rg_overall['ndcg@10']:.4f}"
+            )
+    return failures
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="all-minilm-l6-v2")
     parser.add_argument("--queries", type=Path, default=DEFAULT_QUERIES)
     parser.add_argument("--target", type=Path, default=REPO_ROOT)
     parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument(
+        "--auto-setup",
+        action="store_true",
+        help="Download and verify the requested model via `contextd setup` if not cached locally.",
+    )
+    parser.add_argument("--min-mrr", type=float, default=None)
+    parser.add_argument("--min-ndcg", type=float, default=None)
+    parser.add_argument("--min-semantic-mrr", type=float, default=None)
+    parser.add_argument("--require-beat-ripgrep", action="store_true")
     args = parser.parse_args()
 
     target_dir = args.target.resolve()
     bin_path = find_contextd_bin()
-    model_dir = find_model_dir(args.model)
+    model_dir = ensure_model_dir(bin_path, args.model, auto_setup=args.auto_setup)
     queries = json.loads(args.queries.read_text(encoding="utf-8"))
     port = find_free_port()
 
@@ -188,6 +281,7 @@ def main() -> None:
         shutil.copytree(
             target_dir,
             eval_repo,
+            symlinks=True,
             ignore=shutil.ignore_patterns(".git", "target", "eval", "node_modules", "__pycache__"),
         )
         db_path = tmp_path / "eval.db"
@@ -334,6 +428,42 @@ overlap = 150
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(f"\nSaved report to {args.out}")
+
+    failures: list[str] = []
+    hyb = summary["hybrid_default"]["overall"]
+    hyb_sem = summary["hybrid_default"]["by_category"].get("semantic", {}).get("mrr", 0.0)
+    rg_ov = summary["ripgrep"]["overall"]
+
+    if args.min_mrr is not None and hyb["mrr"] < args.min_mrr:
+        failures.append(f"hybrid_default MRR {hyb['mrr']:.4f} < --min-mrr {args.min_mrr:.4f}")
+    if args.min_ndcg is not None and hyb["ndcg@10"] < args.min_ndcg:
+        failures.append(
+            f"hybrid_default nDCG@10 {hyb['ndcg@10']:.4f} < --min-ndcg {args.min_ndcg:.4f}"
+        )
+    if args.min_semantic_mrr is not None and hyb_sem < args.min_semantic_mrr:
+        failures.append(
+            f"hybrid_default semantic MRR {hyb_sem:.4f} < --min-semantic-mrr {args.min_semantic_mrr:.4f}"
+        )
+    if args.require_beat_ripgrep:
+        if hyb["mrr"] <= rg_ov["mrr"]:
+            failures.append(
+                f"hybrid_default MRR {hyb['mrr']:.4f} did not beat ripgrep {rg_ov['mrr']:.4f}"
+            )
+        if hyb["ndcg@10"] <= rg_ov["ndcg@10"]:
+            failures.append(
+                f"hybrid_default nDCG@10 {hyb['ndcg@10']:.4f} did not beat ripgrep {rg_ov['ndcg@10']:.4f}"
+            )
+
+    if failures:
+        print("\nREGRESSION GATE FAILED:", file=sys.stderr)
+        for msg in failures:
+            print(f"  - {msg}", file=sys.stderr)
+        sys.exit(1)
+    elif any(
+        x is not None
+        for x in (args.min_mrr, args.min_ndcg, args.min_semantic_mrr)
+    ) or args.require_beat_ripgrep:
+        print("\nREGRESSION GATE PASSED")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,110 @@
+[
+  {
+    "id": "zustand-sem-1",
+    "category": "semantic",
+    "query": "save and rehydrate store state from localStorage or async storage",
+    "expected_files": ["src/middleware/persist.ts"]
+  },
+  {
+    "id": "zustand-sem-2",
+    "category": "semantic",
+    "query": "connect store actions and state snapshots to Redux DevTools extension",
+    "expected_files": ["src/middleware/devtools.ts"]
+  },
+  {
+    "id": "zustand-sem-3",
+    "category": "semantic",
+    "query": "write mutable draft updates using immer produce middleware",
+    "expected_files": ["src/middleware/immer.ts"]
+  },
+  {
+    "id": "zustand-sem-4",
+    "category": "semantic",
+    "query": "subscribe to a selected slice of state with custom equality comparison",
+    "expected_files": ["src/middleware/subscribeWithSelector.ts"]
+  },
+  {
+    "id": "zustand-sem-5",
+    "category": "semantic",
+    "query": "shallow equality comparison for objects arrays maps and sets",
+    "expected_files": ["src/vanilla/shallow.ts"]
+  },
+  {
+    "id": "zustand-sem-6",
+    "category": "semantic",
+    "query": "React hook binding to vanilla store via useSyncExternalStore",
+    "expected_files": ["src/react.ts"]
+  },
+  {
+    "id": "zustand-ex-1",
+    "category": "exact",
+    "query": "createJSONStorage PersistOptions PersistStorage StateStorage",
+    "expected_files": ["src/middleware/persist.ts"]
+  },
+  {
+    "id": "zustand-ex-2",
+    "category": "exact",
+    "query": "DevtoolsOptions NamedSet devtoolsImpl",
+    "expected_files": ["src/middleware/devtools.ts"]
+  },
+  {
+    "id": "zustand-ex-3",
+    "category": "exact",
+    "query": "createStore StoreApi StateCreator StoreMutators",
+    "expected_files": ["src/vanilla.ts"]
+  },
+  {
+    "id": "zustand-ex-4",
+    "category": "exact",
+    "query": "useStoreWithEqualityFn createWithEqualityFn",
+    "expected_files": ["src/traditional.ts"]
+  },
+  {
+    "id": "zustand-ex-5",
+    "category": "exact",
+    "query": "useShallow selector memoization React hook",
+    "expected_files": ["src/react/shallow.ts"]
+  },
+  {
+    "id": "zustand-ex-6",
+    "category": "exact",
+    "query": "subscribeWithSelector middleware implementation",
+    "expected_files": ["src/middleware/subscribeWithSelector.ts"]
+  },
+  {
+    "id": "zustand-mix-1",
+    "category": "mixed",
+    "query": "combine initial state object with action creators middleware",
+    "expected_files": ["src/middleware/combine.ts"]
+  },
+  {
+    "id": "zustand-mix-2",
+    "category": "mixed",
+    "query": "redux reducer dispatch pattern middleware",
+    "expected_files": ["src/middleware/redux.ts"]
+  },
+  {
+    "id": "zustand-mix-3",
+    "category": "mixed",
+    "query": "ssrSafe server side rendering middleware helper",
+    "expected_files": ["src/middleware/ssrSafe.ts"]
+  },
+  {
+    "id": "zustand-mix-4",
+    "category": "mixed",
+    "query": "React create UseBoundStore useStore selector hook",
+    "expected_files": ["src/react.ts"]
+  },
+  {
+    "id": "zustand-mix-5",
+    "category": "mixed",
+    "query": "vanilla createStore setState getState getInitialState subscribe",
+    "expected_files": ["src/vanilla.ts"]
+  },
+  {
+    "id": "zustand-mix-6",
+    "category": "mixed",
+    "query": "shallow compare iterables and plain object keys",
+    "expected_files": ["src/vanilla/shallow.ts"]
+  }
+]

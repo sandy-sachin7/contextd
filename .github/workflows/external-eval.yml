@@ -1,0 +1,47 @@
+name: External Retrieval Evaluation
+
+on:
+  schedule:
+    # Weekly scheduled external multi-language evaluation (Sundays at 05:00 UTC)
+    - cron: "0 5 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  external-eval:
+    name: External Multi-Language Eval (fd, httpx, zustand)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache Q8 ONNX model
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/contextd/models
+          key: contextd-model-all-minilm-l6-v2-q8-v1
+
+      - name: Ensure ripgrep is installed
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y ripgrep
+          fi
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Run external multi-language evaluation
+        run: |
+          python3 scripts/eval_external.py \
+            --model all-minilm-l6-v2-q8 \
+            --auto-setup \
+            --min-mrr 0.75 \
+            --min-ndcg 0.80 \
+            --require-beat-ripgrep
